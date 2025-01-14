@@ -1,0 +1,1774 @@
+import numpy as np
+import pandas as pd
+import os
+import argparse
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as patches
+from matplotlib.colors import to_rgba
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+import seaborn as sns
+
+from scipy.stats import mannwhitneyu, linregress, pearsonr, PermutationMethod, BootstrapMethod
+
+from statsmodels.stats.multitest import multipletests, fdrcorrection
+
+from sksurv.nonparametric import kaplan_meier_estimator
+from sksurv.compare import compare_survival
+from sksurv.linear_model import CoxPHSurvivalAnalysis
+from sksurv.metrics import cumulative_dynamic_auc
+from sksurv.ensemble import RandomSurvivalForest
+
+from sklearn.feature_selection import SelectKBest
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import (
+    GridSearchCV, KFold, RepeatedKFold, RepeatedStratifiedKFold,
+    cross_val_score, cross_validate, cross_val_predict, permutation_test_score
+)
+from sklearn.svm import SVC, LinearSVC
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, make_scorer, recall_score, roc_auc_score, roc_curve, roc_auc_score, roc_curve
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--correction", type=str, choices=["fwer","fdr"], default="fdr", help="Multiple hypotheses correction method")
+args = parser.parse_args()
+
+voxel_size = (0.5**3) * (1/1000) # 0.5 (mm³/voxel) X 0.001 (cm³/mm³)
+print("INFO:\nThe size of the MNI 2009b template is 2023.59975 cubic cm and 16188798 voxels.\nThis size seems to be slightly larger than what is reported on in the internet (~1400 cubic cm)\n")
+fwer = True if args.correction=="fwer" else False
+daysXmonth = 30
+percentiles2check = (20,80),(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
+n_resamples = 2500 # Bottstrapping and permutation of correlation values
+n_perms = 5000 # Permutation of Cox Prop Hazard models
+months = np.array([6,12,18,24,30,36,42,48])
+
+nrows, ncols = 1, 5
+figsize = (25,6)
+figs_folder = f"Morphology-tissues_GBM-Wildtype"
+os.makedirs("../Figures/TDMaps_Grade-IV/"+figs_folder, exist_ok=True)
+
+morphology = pd.read_csv(f"../Figures/TDMaps_Grade-IV/demographics-morphology_mask-tissues.csv")
+morphology_tissues_all = morphology[
+    [
+        "OS",
+        'Whole tumor size (voxels)',
+        'Core size (voxels)', 
+        'Non-enhancing size (voxels)',
+        'Enhancing size (voxels)', 
+        'Core+Enhancing size (voxels)',
+        "1-dead 0-alive"
+    ]
+]
+
+morphology_tissues_all = morphology_tissues_all.loc[morphology["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
+morphology_tissues_all = morphology_tissues_all.loc[morphology["OS"].fillna('unknown')!='unknown']
+morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT status"].isin(["positive", "negative"])]
+morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT index"].fillna('unknown')!='unknown']
+morphology_tissues_all = morphology_tissues_all.loc[morphology["1p/19q"].fillna('unknown').isin(["intact", "unknown"])]
+
+morphology_tissues = morphology_tissues_all#.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
+life = morphology_tissues_all["1-dead 0-alive"].values
+morphology_tissues = morphology_tissues.drop(columns="1-dead 0-alive")
+
+####################################################################################################################################################################
+## General numbers
+####################################################################################################################################################################
+stats_string = "Number of samples per each group\n+++++++++++++++++++++++++++++\n"
+for i in range(1,len(morphology_tissues.columns)):
+    x = morphology_tissues[morphology_tissues.columns[i]]*voxel_size
+    y = morphology_tissues["OS"]
+    
+    # Remove rows where x or y is NaN
+    mask = ~np.isnan(x) & ~np.isnan(y)
+    x_clean = x[mask]
+    y_clean = y[mask]
+
+    if i==1:
+        stats_string += f"OS: {len(y_clean)} Patients\n"
+    stats_string += f"{morphology_tissues.columns[i]}: {len(x_clean)} Patients\n"
+
+a,b,c = np.count_nonzero(~np.isnan(life)), np.nansum(life), int(np.nansum(np.where(life==0,1,np.nan)))
+stats_string += f"No. of patients with a registered event (1-dead/0-alive): {a}\n"
+stats_string += f"No. of dead patients (without right censoring): {b} ({round(100*b/a,2)}%)\n"
+stats_string += f"No. of patients with right censoring: {c} ({round(100*c/a,2)}%)\n"
+
+with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt", "w") as stats_file:
+    stats_file.write(stats_string)
+
+####################################################################################################################################################################
+## Correlation coefficient between morphology and OS
+####################################################################################################################################################################
+fig, ((ax1, ax2, ax3),(ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(27, 18))
+cross_morph_0 = np.zeros((len(morphology_tissues.columns), len(morphology_tissues.columns))) * np.nan
+cross_morph_p_0 = np.zeros((len(morphology_tissues.columns), len(morphology_tissues.columns))) * np.nan
+cross_morph_1 = np.zeros((len(morphology_tissues.columns), len(morphology_tissues.columns))) * np.nan
+cross_morph_p_1 = np.zeros((len(morphology_tissues.columns), len(morphology_tissues.columns))) * np.nan
+for i in range(len(morphology_tissues.columns)):
+    y = morphology_tissues[morphology_tissues.columns[i]]
+    for j in range(i,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[j]]
+
+        # Remove rows where x or y is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+
+        cross_morph_0[i,j], cross_morph_p_0[i,j] = pearsonr(x_clean[life_clean==0], y_clean[life_clean==0], alternative='two-sided')
+        cross_morph_1[i,j], cross_morph_p_1[i,j] = pearsonr(x_clean[life_clean==1], y_clean[life_clean==1], alternative='two-sided')
+sns.heatmap(cross_morph_1, annot=True, cmap='coolwarm', vmin=-1, vmax=1, square=True, ax=ax1, 
+            xticklabels=[], yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+sns.heatmap(cross_morph_0, annot=True, cmap='coolwarm', vmin=-1, vmax=1, square=True, ax=ax4, 
+            xticklabels=morphology_tissues.columns, yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+ax1.set_title('Pearson Correlation Coefficients (status=1)', fontweight='bold', fontsize=12)
+ax4.set_title('Pearson Correlation Coefficients (status=0)', fontweight='bold', fontsize=12)
+ax1.tick_params(axis='both', length=0) 
+sns.heatmap(np.round(cross_morph_p_1,4), annot=True, cmap='viridis', square=True, ax=ax2, 
+            xticklabels=[], yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+sns.heatmap(np.round(cross_morph_p_0,4), annot=True, cmap='viridis', square=True, ax=ax5, 
+            xticklabels=morphology_tissues.columns, yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+ax2.set_title('P-values for Correlation Coefficients (status=1)', fontweight='bold', fontsize=12)
+ax5.set_title('P-values for Correlation Coefficients (status=0)', fontweight='bold', fontsize=12)
+ax2.tick_params(axis='both', length=0) 
+if fwer: # Method: Holm's procedure
+    _, cross_morph_p_corrected_flat_1, _, _ = multipletests(cross_morph_p_1[np.triu_indices(len(morphology_tissues.columns))], alpha=0.05, method='holm', is_sorted=False)
+    _, cross_morph_p_corrected_flat_0, _, _ = multipletests(cross_morph_p_0[np.triu_indices(len(morphology_tissues.columns))], alpha=0.05, method='holm', is_sorted=False)
+else: # Method: Benjamin-Hochberg
+    _, cross_morph_p_corrected_flat_1 = fdrcorrection(cross_morph_p_1[np.triu_indices(len(morphology_tissues.columns))], alpha=0.05, method='p', is_sorted=False)
+    _, cross_morph_p_corrected_flat_0 = fdrcorrection(cross_morph_p_0[np.triu_indices(len(morphology_tissues.columns))], alpha=0.05, method='p', is_sorted=False)
+cross_morph_p_corrected_1 = cross_morph_p_1 * np.nan
+cross_morph_p_corrected_0 = cross_morph_p_0 * np.nan
+k = 0
+for r, c in zip(*np.triu_indices(len(morphology_tissues.columns))):
+    cross_morph_p_corrected_1[r,c] = cross_morph_p_corrected_flat_1[k]
+    cross_morph_p_corrected_0[r,c] = cross_morph_p_corrected_flat_0[k]
+    k += 1
+sns.heatmap(np.round(cross_morph_p_corrected_1,4), annot=True, cmap='viridis', square=True, ax=ax3, 
+            xticklabels=[], yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+sns.heatmap(np.round(cross_morph_p_corrected_0,4), annot=True, cmap='viridis', square=True, ax=ax6, 
+            xticklabels=morphology_tissues.columns, yticklabels=morphology_tissues.columns, cbar_kws={"shrink": 0.7})
+ax3.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=1)", fontweight='bold', fontsize=12)
+ax6.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=0)", fontweight='bold', fontsize=12)
+ax3.tick_params(axis='both', length=0) 
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/correlation-morphology.pdf", dpi=300, format='pdf')
+plt.close()
+
+####################################################################################################################################################################
+## Correlation coefficient between OS and Morphology metrics
+####################################################################################################################################################################
+for status in [0,1]:
+    fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+    ax = ax.flatten()
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]]
+        y = morphology_tissues["OS"]    
+        # Remove rows where x or y is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # Plot the scatter plot and regression line with confidence intervals
+        sns.regplot(x=x_clean[life_clean==status]*voxel_size, y=y_clean[life_clean==status]/daysXmonth, ax=ax[i-1], scatter_kws={'s': 15, 'color': 'black'}, ci=95)    
+        # Calculate the linear regression to get the R² value
+        slope, intercept, r_value, p_value, std_err = linregress(x_clean[life_clean==status], y_clean[life_clean==status])
+        r_squared = r_value**2    
+        if status==0:
+            ptext = cross_morph_p_0[0,i]
+            ptextcorr = cross_morph_p_corrected_0[0,i]
+        else:
+            ptext = cross_morph_p_1[0,i]
+            ptextcorr = cross_morph_p_corrected_1[0,i]
+        ax[i-1].text(0.55, 0.95, f'R² = {r_squared:.4f} \n'+r'$\rho$'+f' = {r_value:.4f} \n'+r'$p$'+f" = {ptext:.4f} \n"+r'$p_{corrected}$'+f" = {ptextcorr:.4f}", transform=ax[i-1].transAxes, 
+                    fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_value<=0.05 else "black")    
+        # Set the labels and clean up the plot
+        ax[i-1].set_xlabel(morphology_tissues.columns[i][:-8]+r' ($cm^{3}$)', fontweight="bold", fontsize=12)
+        ax[i-1].set_ylabel("Overall survival (months)", fontweight="bold", fontsize=12)
+        ax[i-1].spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_scatter_status-{status}.pdf", dpi=300, format='pdf')
+    plt.close()
+
+####################################################################################################################################################################
+## Death analyses
+####################################################################################################################################################################
+fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+ax = ax.flatten()
+for i in range(1,len(morphology_tissues.columns)):
+    x = morphology_tissues[morphology_tissues.columns[i]]
+    y = morphology_tissues["OS"]    
+    # Remove rows where x or y is NaN
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+    x_clean = x[mask]
+    y_clean = y[mask]
+    life_clean = life[mask]    
+    pv_s = np.zeros((len(months),2))
+    maxY = 0
+    nums = np.zeros((len(months),2))
+    for j,m in enumerate(months):
+        morph_alive = x_clean[y_clean>=m*daysXmonth] # Subjects with OS higher than cutoff are alive
+        morph_dead = x_clean[(y_clean<=m*daysXmonth) & (life_clean==1)] # Dead subjects with OS lower than cutoff
+        nums[j,:] = [len(morph_alive), len(morph_dead)]
+        mx = int(max([morph_alive.max(), morph_dead.max()]))
+        if mx>maxY:
+            maxY = mx+1
+        ax[i-1].plot(np.full(len(morph_alive),m-1),morph_alive,'o', markersize=1.5, color='forestgreen', label=f"Status = 0 (alive)" if j==0 else None)
+        ax[i-1].plot(np.full(len(morph_dead),m+1),morph_dead,'o', markersize=1.5, color='darkorange', label=f"Status = 1 (dead)" if j==0 else None)
+        ax[i-1].plot([m-1,m+1],[np.median(morph_alive), np.median(morph_dead)], '-s', linewidth=2.5, markersize=6, color='black')
+        ax[i-1].plot([m-1,m-1],[np.median(morph_alive), np.percentile(morph_alive, 75)], '-+', linewidth=1.5, markersize=5, color='black')
+        ax[i-1].plot([m+1,m+1],[np.median(morph_dead), np.percentile(morph_dead, 75)], '-+', linewidth=1.5, color='black')
+        _, pv_s[j,0] = mannwhitneyu(morph_alive, morph_dead, alternative='two-sided')        
+    ax[i-1].text(months[0]-2, -0.01*maxY, "No. of samples", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+    if fwer: # Method: Holm's procedure
+        _, pv_s[:,1], _, _ = multipletests(pv_s[:,0], alpha=0.05, method='holm', is_sorted=False)
+    else: # Method: Benjamin-Hochberg
+        _, pv_s[:,1] = fdrcorrection(pv_s[:,0], alpha=0.05, method='p', is_sorted=False)
+    for j,m in enumerate(months):
+        ax[i-1].text(m-2, -0.075*maxY, f"{int(nums[j,0])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="forestgreen") # Numbers alive
+        ax[i-1].text(m-2, -0.125*maxY, f"{int(nums[j,1])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="darkorange") # Numbers dead
+        if pv_s[j,0]<=0.001:
+            ax[i-1].text(m-1.5, 1.05*maxY, '***', color='black',fontsize=10)
+        elif pv_s[j,0]<=0.01:
+            ax[i-1].text(m-1, 1.05*maxY, '**', color='black',fontsize=10)
+        elif pv_s[j,0]<=0.05:
+            ax[i-1].text(m-.5, 1.05*maxY, '*', color='black',fontsize=10)
+        else:            
+            ax[i-1].text(m-1.5, 1.05*maxY, 'n.s.', color='black',fontsize=10)
+        if pv_s[j,1]<=0.001:
+            ax[i-1].text(m-1.5, 1.1*maxY, '***', color='blue',fontsize=10)
+        elif pv_s[j,1]<=0.01:
+            ax[i-1].text(m-1, 1.1*maxY, '**', color='blue',fontsize=10)
+        elif pv_s[j,1]<=0.05:
+            ax[i-1].text(m-.5, 1.1*maxY, '*', color='blue',fontsize=10)
+        else:            
+            ax[i-1].text(m-1.5, 1.1*maxY, 'n.s.', color='blue',fontsize=10)
+    ax[i-1].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+    ax[i-1].spines[["top", "right"]].set_visible(False)
+    ax[i-1].set_ylabel("Lesion size (a.u.)", fontsize=12)
+    ax[i-1].set_xlabel("Survival (months)", fontsize=12)
+    ax[i-1].set_xlim([months[0]-5, months[-1]+5])
+    ax[i-1].set_xticks(months)
+    ax[i-1].set_xticklabels(months)
+    ax[i-1].set_ylim([-maxY/5,7*maxY/6])
+    ax[i-1].set_yticks([0,maxY])
+    ax[i-1].set_yticklabels([0,"MAX"])
+    ax[i-1].spines['left'].set_bounds(0, maxY)
+    ax[i-1].spines['bottom'].set_bounds(months[0], months[-1])
+    if (i-1)==0:
+        ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly.pdf", dpi=300, format='pdf')
+plt.close()
+
+fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+ax = ax.flatten()
+for i in range(1,len(morphology_tissues.columns)):
+    x = morphology_tissues[morphology_tissues.columns[i]]
+    y = morphology_tissues["OS"]    
+    # Remove rows where x or y is NaN
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==1
+    x_clean = x[mask]
+    y_clean = y[mask]
+    life_clean = life[mask]    
+    pv_s = np.zeros((len(months),2))
+    maxY = 0
+    nums = np.zeros((len(months),2))
+    for j,m in enumerate(months):
+        morph_alive = x_clean[y_clean>=m*daysXmonth] # Subjects with OS higher than cutoff are alive
+        morph_dead = x_clean[(y_clean<=m*daysXmonth) & (life_clean==1)] # Dead subjects with OS lower than cutoff
+        nums[j,:] = [len(morph_alive), len(morph_dead)]
+        mx = int(max([morph_alive.max(), morph_dead.max()]))
+        if mx>maxY:
+            maxY = mx+1
+        ax[i-1].plot(np.full(len(morph_alive),m-1),morph_alive,'o', markersize=1.5, color='forestgreen', label=f"Status = 0 (alive)" if j==0 else None)
+        ax[i-1].plot(np.full(len(morph_dead),m+1),morph_dead,'o', markersize=1.5, color='darkorange', label=f"Status = 1 (dead)" if j==0 else None)
+        ax[i-1].plot([m-1,m+1],[np.median(morph_alive), np.median(morph_dead)], '-s', linewidth=2.5, markersize=6, color='black')
+        ax[i-1].plot([m-1,m-1],[np.median(morph_alive), np.percentile(morph_alive, 75)], '-+', linewidth=1.5, markersize=5, color='black')
+        ax[i-1].plot([m+1,m+1],[np.median(morph_dead), np.percentile(morph_dead, 75)], '-+', linewidth=1.5, color='black')
+        _, pv_s[j,0] = mannwhitneyu(morph_alive, morph_dead, alternative='two-sided')        
+    ax[i-1].text(months[0]-2, -0.01*maxY, "No. of samples", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+    if fwer: # Method: Holm's procedure
+        _, pv_s[:,1], _, _ = multipletests(pv_s[:,0], alpha=0.05, method='holm', is_sorted=False)
+    else: # Method: Benjamin-Hochberg
+        _, pv_s[:,1] = fdrcorrection(pv_s[:,0], alpha=0.05, method='p', is_sorted=False)
+    for j,m in enumerate(months):
+        ax[i-1].text(m-2, -0.075*maxY, f"{int(nums[j,0])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="forestgreen") # Numbers alive
+        ax[i-1].text(m-2, -0.125*maxY, f"{int(nums[j,1])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="darkorange") # Numbers dead
+        if pv_s[j,0]<=0.001:
+            ax[i-1].text(m-1.5, 1.05*maxY, '***', color='black',fontsize=10)
+        elif pv_s[j,0]<=0.01:
+            ax[i-1].text(m-1, 1.05*maxY, '**', color='black',fontsize=10)
+        elif pv_s[j,0]<=0.05:
+            ax[i-1].text(m-.5, 1.05*maxY, '*', color='black',fontsize=10)
+        else:            
+            ax[i-1].text(m-1.5, 1.05*maxY, 'n.s.', color='black',fontsize=10)
+        if pv_s[j,1]<=0.001:
+            ax[i-1].text(m-1.5, 1.1*maxY, '***', color='blue',fontsize=10)
+        elif pv_s[j,1]<=0.01:
+            ax[i-1].text(m-1, 1.1*maxY, '**', color='blue',fontsize=10)
+        elif pv_s[j,1]<=0.05:
+            ax[i-1].text(m-.5, 1.1*maxY, '*', color='blue',fontsize=10)
+        else:            
+            ax[i-1].text(m-1.5, 1.1*maxY, 'n.s.', color='blue',fontsize=10)
+    ax[i-1].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+    ax[i-1].spines[["top", "right"]].set_visible(False)
+    ax[i-1].set_ylabel("Lesion size (a.u.)", fontsize=12)
+    ax[i-1].set_xlabel("Survival (months)", fontsize=12)
+    ax[i-1].set_xlim([months[0]-5, months[-1]+5])
+    ax[i-1].set_xticks(months)
+    ax[i-1].set_xticklabels(months)
+    ax[i-1].set_ylim([-maxY/5,7*maxY/6])
+    ax[i-1].set_yticks([0,maxY])
+    ax[i-1].set_yticklabels([0,"MAX"])
+    ax[i-1].spines['left'].set_bounds(0, maxY)
+    ax[i-1].spines['bottom'].set_bounds(months[0], months[-1])
+    if (i-1)==0:
+        ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly_status-1.pdf", dpi=300, format='pdf')
+plt.close()
+
+####################################################################################################################################################################
+## Death, Median survival and Kaplan-Meier analyses
+####################################################################################################################################################################
+KMcurves_ps = np.zeros((len(morphology_tissues.columns)-1, len(percentiles2check)))
+KMcurves_ps_1 = np.zeros((len(morphology_tissues.columns)-1, len(percentiles2check)))
+Median_ps = np.zeros((len(morphology_tissues.columns)-1, len(percentiles2check)))
+for p_iter, (plow, phigh) in enumerate(percentiles2check):
+    print(f"Percentiles ({plow},{phigh})")    
+    
+    ## Death earlier than X months 
+    perc = plow
+    for status in [0,1]:
+        fig, ax = plt.subplots(nrows*2, ncols, figsize=figsize)
+        ax = ax.flatten()
+        k_ax = 0 
+        for i in range(1,len(morphology_tissues.columns)):
+            x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+            y = morphology_tissues["OS"]    
+            # Remove rows where x or y is NaN
+            mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==status
+            x_clean = x[mask]
+            y_clean = y[mask]
+            life_clean = life[mask]
+            ax[k_ax].text(months[0]-2, -0.375, "No. of deaths", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+            rs = np.zeros((len(months),5)) # rho, pval, low CI, high CI, FDR/FWER pval
+            pv_us = np.zeros((len(months),2))
+            for j,m in enumerate(months):
+                mask_months = y_clean<=(m*daysXmonth)
+                x_masked = x_clean[mask_months]
+                y_masked = y_clean[mask_months]
+                # Correlation
+                result_rho = pearsonr(
+                    x_masked, y_masked, 
+                    method=PermutationMethod(n_resamples=n_resamples), 
+                    alternative='two-sided'
+                )
+                rs[j,0], rs[j,1] = result_rho[0], result_rho[1]
+                rs[j,2:4] = result_rho.confidence_interval(0.95, method=BootstrapMethod(n_resamples=n_resamples))
+                if rs[j,1]<=0.001:
+                    ax[k_ax].text(m-1.5, .425, '***', color='black',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,1]<=0.01:
+                    ax[k_ax].text(m-1, .425, '**', color='black',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,1]<=0.05:
+                    ax[k_ax].text(m-.5, .425, '*', color='black',fontsize=10, transform=ax[k_ax].transData)
+                else:            
+                    ax[k_ax].text(m-1.5, .425, 'n.s.', color='black',fontsize=10, transform=ax[k_ax].transData)
+                ax[k_ax].text(m-2, -0.525, f"{len(y_masked)}", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black") # Numbers
+                # OS 
+                y_masked_small = y_masked[x_masked<=np.percentile(x_masked, perc)]
+                y_masked_big = y_masked[x_masked>=np.percentile(x_masked, 100-perc)]
+                _, pv = mannwhitneyu(y_masked_small, y_masked_big, alternative='two-sided')
+                pv_us[j,0] = pv
+                ax[k_ax+5].plot(np.full(len(y_masked_small),m-1),y_masked_small.values,'o', markersize=2, color='royalblue', label=f"Low TDI (P<={perc})" if j==0 else None)
+                ax[k_ax+5].plot(np.full(len(y_masked_big),m+1),y_masked_big.values,'o', markersize=2, color='salmon', label=f"High TDI (P>={100-perc})" if j==0 else None)
+                if pv<=0.001:
+                    ax[k_ax+5].text(m-1.5, 1300, '***', color='black',fontsize=10)
+                elif pv<=0.01:
+                    ax[k_ax+5].text(m-1, 1300, '**', color='black',fontsize=10)
+                elif pv<=0.05:
+                    ax[k_ax+5].text(m-.5, 1300, '*', color='black',fontsize=10)
+                else:            
+                    ax[k_ax+5].text(m-1.5, 1300, 'n.s.', color='black',fontsize=10)
+                ax[k_ax+5].plot([m-1,m+1],[np.median(y_masked_small), np.median(y_masked_big)], '-s', linewidth=3, markersize=5, color='black')
+                ax[k_ax+5].plot([m-1,m-1],[np.median(y_masked_small), np.percentile(y_masked_small, 75)], '-+', linewidth=2, markersize=5, color='black')
+                ax[k_ax+5].plot([m+1,m+1],[np.median(y_masked_big), np.percentile(y_masked_big, 75)], '-+', linewidth=2, color='black')
+                ax[k_ax+5].text(m-2, 2000, f"{len(y_masked_small)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="royalblue") # Numbers
+                ax[k_ax+5].text(m-2, 1800, f"{len(y_masked_big)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="salmon") # Numbers
+            if fwer: # Method: Holm's procedure
+                _, rs[:,4], _, _ = multipletests(rs[:,1], alpha=0.05, method='holm', is_sorted=False)
+                _, pv_us[:,1], _, _ = multipletests(pv_us[:,0], alpha=0.05, method='holm', is_sorted=False)
+            else: # Method: Benjamin-Hochberg
+                _, rs[:,4] = fdrcorrection(rs[:,1], alpha=0.05, method='p', is_sorted=False)
+                _, pv_us[:,1] = fdrcorrection(pv_us[:,0], alpha=0.05, method='p', is_sorted=False)
+            for j,m in enumerate(months):
+                if rs[j,4]<=0.001:
+                    ax[k_ax].text(m-1.5, .5, '***', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,4]<=0.01:
+                    ax[k_ax].text(m-1, .5, '**', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,4]<=0.05:
+                    ax[k_ax].text(m-.5, .5, '*', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                else:            
+                    ax[k_ax].text(m-1.5, .5, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                if pv_us[j,1]<=0.001:
+                    ax[k_ax+5].text(m-1.5, 1400, '***', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                elif pv_us[j,1]<=0.01:
+                    ax[k_ax+5].text(m-1, 1400, '**', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                elif pv_us[j,1]<=0.05:
+                    ax[k_ax+5].text(m-.5, 1400, '*', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                else:            
+                    ax[k_ax+5].text(m-1.5, 1400, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+            # Set the labels and clean up the plot
+            ax[k_ax].plot(months,rs[:,0],'-o', linewidth=3, markersize=15, color='black')
+            ax[k_ax].plot(months[rs[:,4]<=0.05],rs[rs[:,4]<=0.05,0],'o', markersize=5, color='red')
+            ax[k_ax].fill_between(months, y1=rs[:,2], y2=rs[:,3], color='black', alpha=.15, edgecolor=None)
+            ax[k_ax].hlines(0, months[0]-5, months[-1]+5, color='gray', alpha=.75, linewidth=.75, linestyle='--')
+            ax[k_ax].set_xlim([months[0]-5, months[-1]+5])
+            ax[k_ax].set_xticks(months)
+            ax[k_ax].set_xticklabels([])
+            ax[k_ax].tick_params(axis='x', which='both', bottom=False) 
+            ax[k_ax].set_ylim([-.5,.6])
+            ax[k_ax].set_yticks([-.4,-.2,0,.2,.4,.6])
+            ax[k_ax].set_yticklabels([-0.4,-0.2,0,0.2,0.4,0.6])
+            ax[k_ax].spines['left'].set_bounds(-.4,.6)
+            ax[k_ax].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+            ax[k_ax].set_ylabel("Pearson "+r'$\rho$'+f" (status={status})", fontsize=12)
+            ax[k_ax].spines[["top", "right", "bottom"]].set_visible(False)
+            ax[k_ax+5].set_ylabel("Overall survival (months)", fontsize=12)
+            ax[k_ax+5].set_xlabel("Death cutoff ("+r'$\leq$'+"months)", fontsize=12)
+            ax[k_ax+5].set_xlim([months[0]-5, months[-1]+5])
+            ax[k_ax+5].set_xticks(months)
+            ax[k_ax+5].set_xticklabels(months)
+            ax[k_ax+5].set_ylim([-10,1600])
+            ax[k_ax+5].set_yticks([0,180,360,540,720,900,1080,1260,1440])
+            ax[k_ax+5].set_yticklabels(np.array([0,180,360,540,720,900,1080,1260,1440])//daysXmonth)
+            ax[k_ax+5].spines['bottom'].set_bounds(months[0], months[-1])
+            ax[k_ax+5].spines['left'].set_bounds(0,1440)
+            ax[k_ax+5].spines[["top", "right"]].set_visible(False)
+            if (i-1)==0:
+                ax[k_ax+5].legend(frameon=False, ncols=1, loc='center left')
+            if (i-1)==4:
+                k_ax += 6
+            else:
+                k_ax += 1
+        fig.tight_layout()
+        if status==1:
+            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_death-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+        else:
+            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_dropout-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+        plt.close()
+
+    ## Median survival analyses
+    fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+    ax = ax.flatten()
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+        y = morphology_tissues["OS"]        
+        # Remove rows where x or y is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==1
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # Calculate the 25th and 75th percentiles
+        psmall = y_clean[x_clean<np.percentile(x_clean, plow)]
+        pbig = y_clean[x_clean>np.percentile(x_clean, phigh)]
+        # Obtain the status of each patient
+        lifesmall = life_clean[x_clean<np.percentile(x_clean, plow)]
+        lifebig = life_clean[x_clean>np.percentile(x_clean, phigh)]
+        ax[i-1].boxplot(
+            [psmall[lifesmall==1]/daysXmonth, pbig[lifebig==1]/daysXmonth], 
+            tick_labels=[f"Small tumor (P{plow})", f"Big tumor (P{phigh})"],
+            positions=[1,2],
+            widths=[0.4,0.4]
+        )
+        # Stats
+        _, pv = mannwhitneyu(psmall[lifesmall==1], pbig[lifebig==1], alternative='two-sided')
+        Median_ps[i-1,p_iter] = pv
+        ax[i-1].text(0.35, 0.85, r'$p_U$'+f' = {pv:.4f}', transform=ax[i-1].transAxes, 
+                    fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if pv<=0.05 else "black")        
+        # Set the title and labels
+        ax[i-1].set_xlim([.5,2.5])
+        ax[i-1].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+        ax[i-1].set_ylabel("Overall survival (months)", fontsize=12)
+        ax[i-1].spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    plt.close()
+
+    ## Kaplan-Meier analyses with dead subjects
+    fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+    ax = ax.flatten()
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+        y = morphology_tissues["OS"]        
+        # Remove rows where x, y, or life is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==1
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # Calculate the 25th and 75th percentiles
+        psmall = y_clean[x_clean<np.percentile(x_clean, plow)]
+        pbig = y_clean[x_clean>np.percentile(x_clean, phigh)]
+        # Obtain the status of each patient --> True or False indicating whether the entry is right censored (False) or not (True) (All should be True here)
+        lifesmall = life_clean[x_clean<np.percentile(x_clean, plow)]==1  
+        lifebig = life_clean[x_clean>np.percentile(x_clean, phigh)]==1        
+        # Overall survivale for the given community
+        time, survival_prob, conf_int = kaplan_meier_estimator(
+            lifesmall, psmall, conf_type="log-log"
+        )
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Low TDI", color="royalblue")
+        ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="royalblue")
+        for t in psmall[lifesmall==0].values: # Censoring times
+            ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='royalblue')        
+        time, survival_prob, conf_int = kaplan_meier_estimator(
+            lifebig, pbig, conf_type="log-log"
+        )
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"High TDI", color="salmon")
+        ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="salmon")
+        for t in pbig[lifebig==0].values: # Censoring times
+            ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='salmon')
+        # Numbers
+        ax[i-1].text(-2, -0.025, "No. at risk", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+        for t in [0,10,20,30,40,50,60,70]:
+            num_small = (psmall>=(t*daysXmonth)).sum()
+            num_big = (pbig>=(t*daysXmonth)).sum()
+            ax[i-1].text(t-2, -0.075, f"{num_small}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="royalblue") 
+            ax[i-1].text(t-2, -0.125, f"{num_big}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="salmon") 
+        # Stats
+        OS_STATS = []
+        OS_STATS.extend([(st, os) for st,os in zip(lifesmall,psmall.values)])
+        OS_STATS.extend([(st, os) for st,os in zip(lifebig,pbig.values)])
+        OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', 'float')])
+        MORPH_STATS = [1 for os in psmall.values]
+        MORPH_STATS.extend([2 for os in pbig.values])
+        chisquared, p_val, stats, covariance = compare_survival(OS_STATS, MORPH_STATS, return_stats=True)
+        KMcurves_ps_1[i-1,p_iter] = p_val
+        ax[i-1].text(0.70, 0.85, r"$\chi^2 =$"+f"{round(chisquared,4)}, \np = {round(p_val,4)}", transform=ax[i-1].transAxes, 
+                    fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val<=0.05 else "black")        
+        # Set the title and labels
+        ax[i-1].hlines(0,-5,75, color="black", linewidth=.5)
+        ax[i-1].set_ylim([-.2,1])
+        ax[i-1].set_xlim([-5,75])
+        ax[i-1].set_xticks(range(0,80,10))
+        ax[i-1].set_xticklabels(range(0,80,10))
+        ax[i-1].set_yticks([0,0.2,0.4,0.6,0.8,1])
+        ax[i-1].set_yticklabels([0,0.2,0.4,0.6,0.8,1])
+        ax[i-1].spines['left'].set_bounds(0,1)
+        ax[i-1].spines['bottom'].set_bounds(0,70)
+        ax[i-1].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+        ax[i-1].set_xlabel("Time (months)", fontsize=12)
+        ax[i-1].set_ylabel("Overall survival", fontsize=12)
+        ax[i-1].spines[["top", "right"]].set_visible(False)
+        if i==1:
+            ax[i-1].legend(frameon=False)        
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    plt.close()
+
+    ## Kaplan-Meier analyses with censoring
+    fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+    ax = ax.flatten()
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+        y = morphology_tissues["OS"]        
+        # Remove rows where x, y, or life is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # Calculate the 25th and 75th percentiles
+        psmall = y_clean[x_clean<np.percentile(x_clean, plow)]
+        pbig = y_clean[x_clean>np.percentile(x_clean, phigh)]
+        # Obtain the status of each patient --> True or False indicating whether the entry is right censored (False) or not (True)
+        lifesmall = life_clean[x_clean<np.percentile(x_clean, plow)]==1  
+        lifebig = life_clean[x_clean>np.percentile(x_clean, phigh)]==1        
+        # Overall survivale for the given community
+        time, survival_prob, conf_int = kaplan_meier_estimator(
+            lifesmall, psmall, conf_type="log-log"
+        )
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Low TDI", color="royalblue")
+        ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="royalblue")
+        for t in psmall[lifesmall==0].values: # Censoring times
+            ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='royalblue')        
+        time, survival_prob, conf_int = kaplan_meier_estimator(
+            lifebig, pbig, conf_type="log-log"
+        )
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"High TDI", color="salmon")
+        ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="salmon")
+        for t in pbig[lifebig==0].values: # Censoring times
+            ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='salmon')
+        # Numbers
+        ax[i-1].text(-2, -0.025, "No. at risk", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+        for t in [0,10,20,30,40,50,60,70]:
+            num_small = (psmall>=(t*daysXmonth)).sum()
+            num_big = (pbig>=(t*daysXmonth)).sum()
+            ax[i-1].text(t-2, -0.075, f"{num_small}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="royalblue") 
+            ax[i-1].text(t-2, -0.125, f"{num_big}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="salmon") 
+
+        # Stats
+        OS_STATS = []
+        OS_STATS.extend([(st, os) for st,os in zip(lifesmall,psmall.values)])
+        OS_STATS.extend([(st, os) for st,os in zip(lifebig,pbig.values)])
+        OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', 'float')])
+        MORPH_STATS = [1 for os in psmall.values]
+        MORPH_STATS.extend([2 for os in pbig.values])
+        chisquared, p_val, stats, covariance = compare_survival(OS_STATS, MORPH_STATS, return_stats=True)
+        KMcurves_ps[i-1,p_iter] = p_val
+        ax[i-1].text(0.70, 0.85, r"$\chi^2 =$"+f"{round(chisquared,4)}, \np = {round(p_val,4)}", transform=ax[i-1].transAxes, 
+                    fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val<=0.05 else "black")        
+        # Set the title and labels
+        ax[i-1].hlines(0,-5,75, color="black", linewidth=.5)
+        ax[i-1].set_ylim([-.2,1])
+        ax[i-1].set_xlim([-5,75])
+        ax[i-1].set_xticks(range(0,80,10))
+        ax[i-1].set_xticklabels(range(0,80,10))
+        ax[i-1].set_yticks([0,0.2,0.4,0.6,0.8,1])
+        ax[i-1].set_yticklabels([0,0.2,0.4,0.6,0.8,1])
+        ax[i-1].spines['left'].set_bounds(0,1)
+        ax[i-1].spines['bottom'].set_bounds(0,70)
+        ax[i-1].set_title(morphology_tissues.columns[i], fontweight="bold", fontsize=12)
+        ax[i-1].set_xlabel("Time (months)", fontsize=12)
+        ax[i-1].set_ylabel("Overall survival", fontsize=12)
+        ax[i-1].spines[["top", "right"]].set_visible(False)
+        if i==1:
+            ax[i-1].legend(frameon=False)        
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.pdf", dpi=300, format='pdf')
+    plt.close()
+
+####################################################################################################################################################################
+## Pvalue inspecting across percentiles
+####################################################################################################################################################################
+fig, ax = plt.subplots(len(morphology_tissues.columns)-1, 3, figsize=(19,12))
+for i in range(len(morphology_tissues.columns)-1):
+    ax[i,0].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
+    ax[i,0].plot(np.log(KMcurves_ps[i]), '-o', color='black', linewidth=2, label="Uncorrected")
+    ax[i,1].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
+    ax[i,1].plot(np.log(KMcurves_ps_1[i]), '-o', color='black', linewidth=2)
+    ax[i,2].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
+    ax[i,2].plot(np.log(Median_ps[i]), '-o', color='black', linewidth=2)
+    if fwer: # Method: Holm's procedure
+        _, pcorr_0, _, _ = multipletests(KMcurves_ps[i], alpha=0.05, method='holm', is_sorted=False)
+        _, pcorr_1, _, _ = multipletests(KMcurves_ps_1[i], alpha=0.05, method='holm', is_sorted=False)
+        _, pcorr_2, _, _ = multipletests(Median_ps[i], alpha=0.05, method='holm', is_sorted=False)
+    else: # Method: Benjamin-Hochberg
+        _, pcorr_0 = fdrcorrection(KMcurves_ps[i], alpha=0.05, method='p', is_sorted=False)
+        _, pcorr_1 = fdrcorrection(KMcurves_ps_1[i], alpha=0.05, method='p', is_sorted=False)
+        _, pcorr_2 = fdrcorrection(Median_ps[i], alpha=0.05, method='p', is_sorted=False)
+    ax[i,0].plot(np.log(pcorr_0), '-o', color='blue', linewidth=1.25, label="FWER corrected" if fwer else "FDR corrected")
+    ax[i,1].plot(np.log(pcorr_1), '-o', color='blue', linewidth=1.25)
+    ax[i,2].plot(np.log(pcorr_2), '-o', color='blue', linewidth=1.25)
+
+    ax[i,0].set_xlim([-0.1,len(percentiles2check)-0.9])
+    ax[i,1].set_xlim([-0.1,len(percentiles2check)-0.9])
+    ax[i,2].set_xlim([-0.1,len(percentiles2check)-0.9])
+    ax[i,0].set_ylim(np.log([0.00005,2]))
+    ax[i,1].set_ylim(np.log([0.00005,2]))
+    ax[i,2].set_ylim(np.log([0.00005,2]))
+
+    ax[i,0].set_yticks(np.round(np.log([0.001,0.01,0.1,1]),2))
+    ax[i,0].set_yticklabels([r'$10^{-3}$',r'$10^{-2}$',r'$10^{-1}$',r'$10^{0}$'])
+    ax[i,1].set_yticks(np.round(np.log([0.001,0.01,0.1,1]),2))
+    ax[i,1].set_yticklabels([])
+    ax[i,2].set_yticks(np.round(np.log([0.001,0.01,0.1,1]),2))
+    ax[i,2].set_yticklabels([])
+    ax[i,0].set_ylabel(morphology_tissues.columns[i+1][:-8]+r' ($cm^{3}$)', fontweight='bold', fontsize=5)
+
+    if i==0:
+        ax[i,0].set_title("Kaplan-Meier p values", fontweight='bold')
+        ax[i,1].set_title("Kaplan-Meier p values (status=1)", fontweight='bold')
+        ax[i,2].set_title("Median OS p values (status=1)", fontweight='bold')
+    if i==len(morphology_tissues.columns)-2:
+        ax[i,0].legend(frameon=False,ncol=2)
+
+    if i!=len(morphology_tissues.columns)-2:
+        ax[i,0].spines[["top","right","bottom"]].set_visible(False)
+        ax[i,1].spines[["top","right","bottom","left"]].set_visible(False)
+        ax[i,2].spines[["top","right","bottom","left"]].set_visible(False)
+        ax[i,0].set_xticks([])
+        ax[i,1].set_xticks([])
+        ax[i,2].set_xticks([])
+    else:
+        ax[i,0].spines[["top","right"]].set_visible(False)
+        ax[i,1].spines[["top","right","left"]].set_visible(False)
+        ax[i,2].spines[["top","right","left"]].set_visible(False)
+        ax[i,0].set_xticks(range(len(percentiles2check)))
+        ax[i,1].set_xticks(range(len(percentiles2check)))
+        ax[i,2].set_xticks(range(len(percentiles2check)))
+        ax[i,0].set_xticklabels([f"{plow}/{phigh}" for plow, phigh in percentiles2check])
+        ax[i,1].set_xticklabels([f"{plow}/{phigh}" for plow, phigh in percentiles2check])
+        ax[i,2].set_xticklabels([f"{plow}/{phigh}" for plow, phigh in percentiles2check])
+        ax[i,0].set_xlabel("Percentiles", fontweight='bold')
+        ax[i,1].set_xlabel("Percentiles", fontweight='bold')
+        ax[i,2].set_xlabel("Percentiles", fontweight='bold')
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.pdf", dpi=300, format='pdf')
+plt.close()
+print("FINISHED SURVIVAL AND KAPLAN-MEIER ANALYSES")
+print("   ************************   ")
+
+####################################################################################################################################################################
+## FEATURE SELECTION USING COX PROPORTIONAL HAZARD MODELS
+####################################################################################################################################################################
+# With right censoring
+fig, ax = plt.subplots(1,1, figsize=(6,4))
+level_CI = 95
+HarrellCindex = np.zeros((len(morphology_tissues.columns)-1,))
+HarrellCindex_p = np.zeros((len(morphology_tissues.columns)-1,))
+colors = []
+Cmodel_pred = []
+stats_string = "Right censoring\n===========================\n"
+for i in range(1,len(morphology_tissues.columns)):
+    x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+    y = morphology_tissues["OS"]    
+    # Remove rows where x, y, or life is NaN
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+    x_clean = x[mask]
+    y_clean = y[mask]
+    life_clean = life[mask]
+    # Censoring (based on the status variable)
+    OS_STATS = []
+    OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
+    OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+    # Model
+    Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
+    Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
+    HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
+    pop = []
+    for _ in range(n_perms):
+        perm_OS_STATS = np.random.permutation(OS_STATS)
+        p_Cmodel = CoxPHSurvivalAnalysis()
+        p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
+        pop.append(p_Cmodel.score(x_clean.values.reshape(-1, 1),perm_OS_STATS))
+    HarrellCindex_p[i-1] = np.mean(np.array(pop) >= HarrellCindex[i-1])
+    if HarrellCindex_p[i-1]<=0.001:
+        colors.append("cornflowerblue")
+    elif HarrellCindex_p[i-1]<=0.01:
+        colors.append("cornflowerblue")
+    elif HarrellCindex_p[i-1]<=0.05:
+        colors.append("cornflowerblue")
+    else:            
+        colors.append("lightgray")
+    # Summary
+    stats_string += f"Feature: {morphology_tissues.columns[i][:-8]+r' ($cm^{3}$)'} with a c-index of {HarrellCindex[i-1]} (p={HarrellCindex_p[i-1]})\n"
+    # Prediction
+    x_new, low_p = {}, 0
+    for pc in percentiles2check:
+        x_new[f"P({low_p},{pc[0]})"] = x_clean[(x_clean>np.percentile(x_clean, low_p))&(x_clean<=np.percentile(x_clean, pc[0]))].mean()
+        x_new[f"P({pc[1]},{100-low_p})"] = x_clean[(x_clean>np.percentile(x_clean, pc[1]))&(x_clean<=np.percentile(x_clean, 100-low_p))].mean()
+        low_p = pc[0]
+    x_new = pd.DataFrame.from_dict(
+            x_new,
+            orient="index",
+    )
+    Cmodel_pred.append(
+        Cmodel.predict_survival_function(x_new)
+    )
+ax.bar(
+    range(0,len(morphology_tissues.columns)-1), 
+    np.sort(HarrellCindex)[::-1],
+    edgecolor="black",
+    color=[colors[ii] for ii in np.argsort(HarrellCindex)[::-1]]
+)
+for ii, pval in enumerate(HarrellCindex_p[np.argsort(HarrellCindex)[::-1]]):
+    if pval<=0.001:
+        ax.text(ii-.25, .65, '***', color='black',fontsize=10, transform=ax.transData)
+    elif pval<=0.01:
+        ax.text(ii-.25, .65, '**', color='black',fontsize=10, transform=ax.transData)
+    elif pval<=0.05:
+        ax.text(ii-.25, .65, '*', color='black',fontsize=10, transform=ax.transData)
+    else:            
+        ax.text(ii-.25, .65, 'n.s.', color='black',fontsize=10, transform=ax.transData)
+ax.hlines(0.5, -1, len(morphology_tissues.columns)-1, color='black', linewidth=.75, linestyle='--')
+ax.spines[["top","right"]].set_visible(False)
+ax.set_ylabel("Harrell's C-index")
+ax.set_ylim([0,0.7])
+ax.set_xlim([-1,len(morphology_tissues.columns)])
+ax.set_xticks(range(0,len(morphology_tissues.columns)-1))
+ax.set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in np.argsort(HarrellCindex)[::-1]], rotation=75)
+ax.spines['bottom'].set_bounds(0,len(morphology_tissues.columns)-2)
+ax.spines['left'].set_bounds(0,.7)
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.pdf", dpi=300, format='pdf')
+plt.close()
+# Plot the prediction
+start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
+colors = [
+    start_color * (1 - cstep) + end_color * cstep
+    for cstep in np.linspace(0, 1, len(percentiles2check)*2)
+]
+cmap = mcolors.LinearSegmentedColormap.from_list("salmon_royalblue", ["salmon", "royalblue"])
+norm = plt.Normalize(vmin=0, vmax=1)  # Scale from 0 to 1
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])  # Required for ScalarMappable
+fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+ax = ax.flatten()
+time = np.arange(0, np.nanmax(morphology_tissues["OS"].values)) 
+for i in range(0,len(morphology_tissues.columns)-1):
+    k_color = 0
+    for j in range(0,len(Cmodel_pred[i]),2):
+        survival_pred = Cmodel_pred[i][j]
+        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[k_color])
+        survival_pred = Cmodel_pred[i][j+1]
+        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[-1-k_color])
+        k_color += 1
+    if i==0:
+        cbar_ax = inset_axes(ax[i], width="5%", height="15%", loc="upper right", borderpad=2)  
+        cbar = plt.colorbar(sm, cax=cbar_ax, orientation="vertical")
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels([r"Lesion size $P_{(0-20)}$", r"Lesion size $P_{(80-100)}$"], fontsize=10)
+        cbar.ax.yaxis.set_ticks_position('left')
+        cbar.ax.yaxis.set_label_position('left') 
+    ax[i].text(
+        0, 
+        0.05, 
+        r'$C^{H}$'+f" = {round(HarrellCindex[i],4)}\n"+r'$p_{perm}$'+f" = {round(HarrellCindex_p[i],4)}", 
+        color='black' if HarrellCindex_p[i]>0.05 else 'red',
+        fontsize=12, 
+        transform=ax[i].transData
+    )
+    ax[i].set_ylim([0,1])
+    ax[i].set_xlim([-5,75])
+    ax[i].set_xticks(range(0,80,10))
+    ax[i].set_xticklabels(range(0,80,10))
+    ax[i].set_yticks([0,0.2,0.4,0.6,0.8,1])
+    ax[i].set_yticklabels([0,0.2,0.4,0.6,0.8,1])
+    ax[i].spines['left'].set_bounds(0,1)
+    ax[i].spines['bottom'].set_bounds(0,70)
+    ax[i].set_title(morphology_tissues.columns[i+1], fontweight="bold", fontsize=12)
+    ax[i].set_xlabel("Time (months)", fontsize=12)
+    ax[i].set_ylabel("Overall survival", fontsize=12)
+    ax[i].spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.pdf", dpi=300, format='pdf')
+plt.close()
+
+stats_string += "------------------------------\n"
+
+# Without right censoring
+fig, ax = plt.subplots(1,1, figsize=(6,4))
+level_CI = 95
+HarrellCindex = np.zeros((len(morphology_tissues.columns)-1,))
+HarrellCindex_p = np.zeros((len(morphology_tissues.columns)-1,))
+colors = []
+Cmodel_pred = []
+stats_string += "No censoring\n===========================\n"
+for i in range(1,len(morphology_tissues.columns)):
+    x = morphology_tissues[morphology_tissues.columns[i]] * voxel_size
+    y = morphology_tissues["OS"]    
+    # Remove rows where x, y, or life is NaN
+    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==1
+    x_clean = x[mask]
+    y_clean = y[mask]
+    life_clean = life[mask]
+    # Censoring (based on the status variable)
+    OS_STATS = []
+    OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
+    OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+    # Model
+    Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
+    Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
+    HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
+    pop = []
+    for _ in range(n_perms):
+        perm_OS_STATS = np.random.permutation(OS_STATS)
+        p_Cmodel = CoxPHSurvivalAnalysis()
+        p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
+        pop.append(p_Cmodel.score(x_clean.values.reshape(-1, 1),perm_OS_STATS))
+    HarrellCindex_p[i-1] = np.mean(np.array(pop) >= HarrellCindex[i-1])
+    if HarrellCindex_p[i-1]<=0.001:
+        colors.append("cornflowerblue")
+    elif HarrellCindex_p[i-1]<=0.01:
+        colors.append("cornflowerblue")
+    elif HarrellCindex_p[i-1]<=0.05:
+        colors.append("cornflowerblue")
+    else:            
+        colors.append("lightgray")
+    # Summary
+    stats_string += f"Feature: {morphology_tissues.columns[i][:-8]+r' ($cm^{3}$)'} with a c-index of {HarrellCindex[i-1]} (p={HarrellCindex_p[i-1]})\n"
+    # Prediction
+    x_new, low_p = {}, 0
+    for pc in percentiles2check:
+        x_new[f"P({low_p},{pc[0]})"] = x_clean[(x_clean>np.percentile(x_clean, low_p))&(x_clean<=np.percentile(x_clean, pc[0]))].mean()
+        x_new[f"P({pc[1]},{100-low_p})"] = x_clean[(x_clean>np.percentile(x_clean, pc[1]))&(x_clean<=np.percentile(x_clean, 100-low_p))].mean()
+        low_p = pc[0]
+    x_new = pd.DataFrame.from_dict(
+            x_new,
+            orient="index",
+    )
+    Cmodel_pred.append(
+        Cmodel.predict_survival_function(x_new)
+    )
+ax.bar(
+    range(0,len(morphology_tissues.columns)-1), 
+    np.sort(HarrellCindex)[::-1],
+    edgecolor="black",
+    color=[colors[ii] for ii in np.argsort(HarrellCindex)[::-1]]
+)
+for ii, pval in enumerate(HarrellCindex_p[np.argsort(HarrellCindex)[::-1]]):
+    if pval<=0.001:
+        ax.text(ii-.25, .65, '***', color='black',fontsize=10, transform=ax.transData)
+    elif pval<=0.01:
+        ax.text(ii-.25, .65, '**', color='black',fontsize=10, transform=ax.transData)
+    elif pval<=0.05:
+        ax.text(ii-.25, .65, '*', color='black',fontsize=10, transform=ax.transData)
+    else:            
+        ax.text(ii-.25, .65, 'n.s.', color='black',fontsize=10, transform=ax.transData)
+ax.hlines(0.5, -1, len(morphology_tissues.columns)-1, color='black', linewidth=.75, linestyle='--')
+ax.spines[["top","right"]].set_visible(False)
+ax.set_ylabel("Harrell's C-index")
+ax.set_ylim([0,0.7])
+ax.set_xlim([-1,len(morphology_tissues.columns)])
+ax.set_xticks(range(0,len(morphology_tissues.columns)-1))
+ax.set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in np.argsort(HarrellCindex)[::-1]], rotation=75)
+ax.spines['bottom'].set_bounds(0,len(morphology_tissues.columns)-2)
+ax.spines['left'].set_bounds(0,.7)
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.pdf", dpi=300, format='pdf')
+plt.close()
+# Plot the prediction
+start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
+colors = [
+    start_color * (1 - cstep) + end_color * cstep
+    for cstep in np.linspace(0, 1, len(percentiles2check)*2)
+]
+cmap = mcolors.LinearSegmentedColormap.from_list("salmon_royalblue", ["salmon", "royalblue"])
+norm = plt.Normalize(vmin=0, vmax=1)  # Scale from 0 to 1
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])  # Required for ScalarMappable
+fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+ax = ax.flatten()
+time = np.arange(0, np.nanmax(morphology_tissues["OS"].values)) 
+for i in range(0,len(morphology_tissues.columns)-1):
+    k_color = 0
+    for j in range(0,len(Cmodel_pred[i]),2):
+        survival_pred = Cmodel_pred[i][j]
+        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[k_color])
+        survival_pred = Cmodel_pred[i][j+1]
+        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[-1-k_color])
+        k_color += 1
+    if i==0:
+        cbar_ax = inset_axes(ax[i], width="5%", height="15%", loc="upper right", borderpad=2)  
+        cbar = plt.colorbar(sm, cax=cbar_ax, orientation="vertical")
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels([r"Lesion size $P_{(80-100)}$", r"Lesion size $P_{(0-20)}$"], fontsize=15)
+        cbar.ax.yaxis.set_ticks_position('left')
+        cbar.ax.yaxis.set_label_position('left') 
+    ax[i].text(
+        0, 
+        0.05, 
+        r'$C^{H}$'+f" = {round(HarrellCindex[i],4)}\n"+r'$p_{perm}$'+f" = {round(HarrellCindex_p[i],4)}", 
+        color='black' if HarrellCindex_p[i]>0.05 else 'red',
+        fontsize=12, 
+        transform=ax[i].transData
+    )
+    ax[i].set_ylim([0,1])
+    ax[i].set_xlim([-5,75])
+    ax[i].set_xticks(range(0,80,10))
+    ax[i].set_xticklabels(range(0,80,10))
+    ax[i].set_yticks([0,0.2,0.4,0.6,0.8,1])
+    ax[i].set_yticklabels([0,0.2,0.4,0.6,0.8,1])
+    ax[i].spines['left'].set_bounds(0,1)
+    ax[i].spines['bottom'].set_bounds(0,70)
+    ax[i].set_title(morphology_tissues.columns[i+1], fontweight="bold", fontsize=12)
+    ax[i].set_xlabel("Time (months)", fontsize=12)
+    ax[i].set_ylabel("Overall survival", fontsize=12)
+    ax[i].spines[["top", "right"]].set_visible(False)
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.pdf", dpi=300, format='pdf')
+plt.close()
+
+with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresMORPH_CoxPHazard.txt", "w") as stats_file:
+    stats_file.write(stats_string)
+
+print("FINISHED FEATURE IMPORTANCE USING COX PH MODELS AND C-index")
+print("   ************************   ")
+
+####################################################################################################################################################################
+## FEATURE SELECTION USING COX PROPORTIONAL HAZARD MODELS and THE K FIRST/BEST FEATURES SORTED ABOVE
+####################################################################################################################################################################
+# Features, except the Core labels due to nans which makes the workflow difficult to automatize. Since they do not seem to contribute much, we discard them before hand.
+def Harrell_C_index(X, y):
+    n_features = X.shape[1]
+    Cscores = np.empty(n_features)
+    m = CoxPHSurvivalAnalysis()
+    for j in range(n_features):
+        Xj = X[:, j : j + 1]
+        m.fit(Xj, y)
+        Cscores[j] = m.score(Xj, y)
+    return Cscores
+
+pipe = Pipeline(
+    [
+        ("select", SelectKBest(Harrell_C_index)),
+        ("model", CoxPHSurvivalAnalysis()),
+    ]
+)
+splits = range(2,11) # 10
+runs = 50 # 20
+
+# Include right censored data and discard possible nan values
+#feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-1] 
+feature_labels = [ # Manual sorting for now, based on the C index
+    'Enhancing size (voxels)', 
+    'Whole tumor size (voxels)',
+    'Core+Enhancing size (voxels)',
+    'Non-enhancing size (voxels)',
+    'Core size (voxels)', 
+]
+morphology_final = morphology_tissues[["OS"]+feature_labels]
+mask = morphology_final[morphology_final.columns].notna().all(axis=1) & ~np.isnan(life)
+morphology_filtered = morphology_final.loc[mask]
+life_filtered = life[mask]
+features = morphology_filtered[morphology_filtered.columns[1:]].values
+OS_STATS = []
+OS_STATS.extend([(st, os) for st,os in zip(life_filtered,morphology_filtered["OS"].values)])
+OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+
+param_grid = {"select__k": np.arange(1, len(morphology_filtered.columns))}
+mean_test = np.zeros((runs, len(splits)))
+k_best_results = np.zeros((runs, len(splits)))
+fig, ax = plt.subplots(1,3, figsize=(12,6))
+for tt in range(runs):
+    print(f"Right censoring: Select K features workflow; run No. {tt+1}")
+    for i, spl in enumerate(splits):
+        cv = KFold(n_splits=spl, shuffle=True, random_state=None) # Assign a given random state if you want to ensure reproducibility
+        gcv = GridSearchCV(pipe, param_grid, return_train_score=True, cv=cv)
+        gcv.fit(features, OS_STATS)        
+        results = pd.DataFrame(gcv.cv_results_).sort_values(by="mean_test_score", ascending=False)
+        mean_test[tt,i] = results["mean_test_score"].values.max()
+        k_best_results[tt,i] = results["param_select__k"].values[0]
+        ax[0].plot(spl, mean_test[tt,i], 'o', color='black', alpha=0.25, markersize=5)
+
+best_split = splits[np.nanmean(mean_test, axis=0).argmax()]-2
+k_feat, feature_counts = np.unique(k_best_results[:,best_split], return_counts=True)
+ax[0].errorbar(splits, np.nanmean(mean_test, axis=0), yerr=np.nanstd(mean_test, axis=0)/np.sqrt(splits), linestyle='-', color='blue', linewidth=1, fmt='x',markersize=10, capsize=10)
+rect = patches.Rectangle((best_split+1.75, np.nanmean(mean_test, axis=0).max()-.0125), 0.5, 0.025, linewidth=2, edgecolor='r', facecolor='none')
+ax[0].add_patch(rect)
+ax[0].spines[["top","right"]].set_visible(False)
+ax[0].set_xticks(splits)
+ax[0].set_xticklabels(splits)
+ax[0].set_xlim([splits[0]-.5, splits[-1]+.5])
+ax[0].set_xlabel("No. of splits")
+ax[0].set_ylabel("Average Harrell's C index")
+ax[0].spines['bottom'].set_bounds(splits[0], splits[-1])
+ax[1].bar(
+    k_feat, 
+    feature_counts,
+    edgecolor="black",
+    color="gray",
+    width=.35
+)
+ax[1].spines[["top","right"]].set_visible(False)
+ax[1].set_xlim([.5,features.shape[-1]+.5])
+ax[1].set_xticks(range(1,features.shape[-1]+1))
+ax[1].set_xticklabels([f"k={ii}" for ii in range(1,features.shape[-1]+1)])
+ax[1].set_ylabel("No. of ocurrences")
+ax[1].set_xlabel("No. of selected TD Maps")
+ax[1].spines['bottom'].set_bounds(1,features.shape[-1])
+ax[1].set_ylim([0, max(feature_counts)+.5])
+ax[1].set_yticks(range(0,max(feature_counts)+1))
+ax[1].set_yticklabels(range(0,max(feature_counts)+1))
+feature_participation = np.zeros((len(feature_labels),)) # Same order as in labels
+for i in range(len(k_feat)):
+    k_fs = int(k_feat[i])
+    for j in range(k_fs):
+        feature_participation[j] += feature_counts[i]
+
+ax[2].bar(
+    range(1,features.shape[-1]+1), 
+    100*feature_participation/runs,
+    edgecolor="black",
+    color="gray",
+    width=.35
+)
+ax[2].spines[["top","right"]].set_visible(False)
+ax[2].set_xlim([.5,features.shape[-1]+.5])
+ax[2].set_xticks(range(1,features.shape[-1]+1))
+ax[2].set_xticklabels(feature_labels, rotation=75)
+ax[2].set_ylabel("Percentage of participation (%)")
+ax[2].spines['bottom'].set_bounds(1,features.shape[-1])
+ax[2].set_ylim([0, 100])
+ax[2].set_yticks([0,20,40,60,80,100])
+ax[2].set_yticklabels([0,20,40,60,80,100])
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.pdf", dpi=300, format='pdf')
+
+# Discard right censored data and possible nan values
+#feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-1] 
+feature_labels = [ # Manual sorting for now, based on the C index
+    'Whole tumor size (voxels)',
+    'Enhancing size (voxels)', 
+    'Non-enhancing size (voxels)',
+    'Core+Enhancing size (voxels)',
+    'Core size (voxels)', 
+]
+morphology_final = morphology_tissues[["OS"]+feature_labels]
+mask = morphology_final[morphology_final.columns].notna().all(axis=1) & ~np.isnan(life) & life==1
+morphology_filtered = morphology_final.loc[mask]
+life_filtered = life[mask]
+features = morphology_filtered[morphology_filtered.columns[1:]].values
+OS_STATS = []
+OS_STATS.extend([(st, os) for st,os in zip(life_filtered,morphology_filtered["OS"].values)])
+OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+
+param_grid = {"select__k": np.arange(1, len(morphology_filtered.columns))}
+mean_test = np.zeros((runs, len(splits)))
+k_best_results = np.zeros((runs, len(splits)))
+fig, ax = plt.subplots(1,3, figsize=(12,6))
+for tt in range(runs):
+    print(f"Without censoring: Select K features workflow; run No. {tt+1}")
+    for i, spl in enumerate(splits):
+        cv = KFold(n_splits=spl, shuffle=True, random_state=None) # Assign a given random state if you want to ensure reproducibility
+        gcv = GridSearchCV(pipe, param_grid, return_train_score=True, cv=cv)
+        gcv.fit(features, OS_STATS)        
+        results = pd.DataFrame(gcv.cv_results_).sort_values(by="mean_test_score", ascending=False)
+        mean_test[tt,i] = results["mean_test_score"].values.max()
+        k_best_results[tt,i] = results["param_select__k"].values[0]
+        ax[0].plot(spl, mean_test[tt,i], 'o', color='black', alpha=0.25, markersize=5)
+
+best_split = splits[np.nanmean(mean_test, axis=0).argmax()]-2
+k_feat, feature_counts = np.unique(k_best_results[:,best_split], return_counts=True)
+ax[0].errorbar(splits, np.nanmean(mean_test, axis=0), yerr=np.nanstd(mean_test, axis=0)/np.sqrt(splits), linestyle='-', color='blue', linewidth=1, fmt='x',markersize=10, capsize=10)
+rect = patches.Rectangle((best_split+1.75, np.nanmean(mean_test, axis=0).max()-.0125), 0.5, 0.025, linewidth=2, edgecolor='r', facecolor='none')
+ax[0].add_patch(rect)
+ax[0].spines[["top","right"]].set_visible(False)
+ax[0].set_xticks(splits)
+ax[0].set_xticklabels(splits)
+ax[0].set_xlim([splits[0]-.5, splits[-1]+.5])
+ax[0].set_xlabel("No. of splits")
+ax[0].set_ylabel("Average Harrell's C index")
+ax[0].spines['bottom'].set_bounds(splits[0], splits[-1])
+ax[1].bar(
+    k_feat, 
+    feature_counts,
+    edgecolor="black",
+    color="gray",
+    width=.35
+)
+ax[1].spines[["top","right"]].set_visible(False)
+ax[1].set_xlim([.5,features.shape[-1]+.5])
+ax[1].set_xticks(range(1,features.shape[-1]+1))
+ax[1].set_xticklabels([f"k={ii}" for ii in range(1,features.shape[-1]+1)])
+ax[1].set_ylabel("No. of ocurrences")
+ax[1].set_xlabel("No. of selected TD Maps")
+ax[1].spines['bottom'].set_bounds(1,features.shape[-1])
+ax[1].set_ylim([0, max(feature_counts)+.5])
+ax[1].set_yticks(range(0,max(feature_counts)+1))
+ax[1].set_yticklabels(range(0,max(feature_counts)+1))
+
+feature_participation = np.zeros((len(feature_labels),)) # Same order as in labels
+for i in range(len(k_feat)):
+    k_fs = int(k_feat[i])
+    for j in range(k_fs):
+        feature_participation[j] += feature_counts[i]
+ax[2].bar(
+    range(1,features.shape[-1]+1), 
+    100*feature_participation/runs,
+    edgecolor="black",
+    color="gray",
+    width=.35
+)
+ax[2].spines[["top","right"]].set_visible(False)
+ax[2].set_xlim([.5,features.shape[-1]+.5])
+ax[2].set_xticks(range(1,features.shape[-1]+1))
+ax[2].set_xticklabels(feature_labels, rotation=75)
+ax[2].set_ylabel("Percentage of participation (%)")
+ax[2].spines['bottom'].set_bounds(1,features.shape[-1])
+ax[2].set_ylim([0, 100])
+ax[2].set_yticks([0,20,40,60,80,100])
+ax[2].set_yticklabels([0,20,40,60,80,100])
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.pdf", dpi=300, format='pdf')
+
+print("FINISHED FEATURE IMPORTANCE USING GRID SEARCH AND COX PH MODELS")
+print("   ************************   ")
+
+####################################################################################################################################################################
+## FEATURE SELECTION USING CLASSICAL ML CLASSIFIERS TO PREDICT SURVIVAL
+####################################################################################################################################################################
+N_splits = [8,6,2]
+runs = 50
+times_auc_split = {
+    2: np.arange(180,1800,180),
+    6: np.arange(180,1100,180),
+    8: np.arange(180,1000,180),
+}
+colors = [
+    #"brown",
+    "black",
+    "pink",
+    #"cyan",
+    #"orange",
+    "green",
+    "blue",
+    "purple",
+    #"gray",
+    #"red"
+]
+
+# Using Cox Prop Hazard models
+fig, ax = plt.subplots(len(N_splits),2, figsize=(16,5*len(N_splits)), gridspec_kw={'width_ratios': [2, 1]}) # TODO add a row for each split tried
+for i_ax, splits in enumerate(N_splits):
+    print(f"No. of splits: {splits}")
+    times_auc = times_auc_split[splits] 
+    HarrellCindex = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs)))
+    DynAUC = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs), len(times_auc))) * np.nan
+    DynAUC_average = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs))) * np.nan
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]]
+        y = morphology_tissues["OS"]    
+        # Remove rows where x, y, or life is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # Censoring (based on the status variable)
+        OS_STATS = []
+        OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
+        OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+        # KFold and survival prediction
+        RKF = RepeatedKFold(n_splits=splits, n_repeats=runs)
+        fails = 0
+        for j, (train_index, test_index) in enumerate(RKF.split(x_clean, OS_STATS)):
+            # MODEL 1: Cox Proportional Hazard
+            Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
+            Cmodel.fit(x_clean.values[train_index].reshape(-1,1), OS_STATS[train_index])
+            HarrellCindex[i-1,j] = Cmodel.score(
+                    x_clean.values[test_index].reshape(-1,1),
+                    OS_STATS[test_index]
+            )
+            try:
+                DynAUC[i-1,j,:], DynAUC_average[i-1,j] = cumulative_dynamic_auc(
+                    OS_STATS,#[train_index]
+                    OS_STATS[test_index],
+                    Cmodel.predict(x_clean.values[test_index].reshape(-1,1)),
+                    times=times_auc
+                )
+            except:
+                fails += 1
+                print(f"The times were not within the follow-up time range of test data. {round(100*fails/(runs*splits),2)}% of the runs have been ignored so far.")
+
+        # TODO: Implement permutation procedure for the calculation of pvalues
+        ax[i_ax,0].plot(times_auc/daysXmonth, np.nanmean(DynAUC[i-1], axis=0), '-o', linewidth=0.5, markersize=8, label=morphology_tissues.columns[i][:-8]+r' ($cm^{3}$)', color=colors[i-1], alpha=.5)
+    ax[i_ax,0].hlines(0.5, -3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3, color='black', linewidth=.75, linestyle='--', alpha=.5)
+    ax[i_ax,0].spines[["top","right"]].set_visible(False)
+    ax[i_ax,0].set_xlim([-3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3])
+    ax[i_ax,0].set_xticks(times_auc/daysXmonth)
+    ax[i_ax,0].set_xticklabels(np.int32(times_auc/daysXmonth))
+    ax[i_ax,0].set_ylim([0.4,0.75])
+    ax[i_ax,0].set_yticks([0.4,.5,.6,.7])
+    ax[i_ax,0].set_ylabel("Cumulative dynamic AUC(t)")
+    ax[i_ax,0].set_title(f"No. of splits: {splits}", fontweight='bold')
+    ax[i_ax,0].set_xlabel("Survival at time (months)")
+    ax[i_ax,1].bar(
+        [morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in range(len(morphology_tissues.columns)-1)],
+        np.nanmean(DynAUC_average, axis=1),
+        edgecolor="black",
+        color=["blue" if i in np.nanmean(DynAUC_average, axis=1).argsort()[-2:]  else "lightgrey" for i in range(len(morphology_tissues.columns)-1)]
+    )
+    ax[i_ax,1].hlines(0.5, -1, len(morphology_tissues.columns), color='black', linewidth=.75, linestyle='--', alpha=.5)
+    ax[i_ax,1].spines[["top","right","left"]].set_visible(False)
+    ax[i_ax,1].set_xlim([-1, len(morphology_tissues.columns)-1])
+    ax[i_ax,1].set_xticks(range(0, len(morphology_tissues.columns)-1))
+    ax[i_ax,1].set_ylim([0.4,0.75])
+    ax[i_ax,1].set_yticks([0.4,.5,.6,.7])
+    ax[i_ax,1].set_yticklabels([])
+    ax[i_ax,1].tick_params(axis='y', length=0) 
+    if i_ax==(len(N_splits)-1):
+        ax[i_ax,1].set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in range(len(morphology_tissues.columns)-1)], rotation=75, fontsize=8)
+    elif i_ax==0:
+        ax[i_ax,1].set_title("Average AUC(t)", fontweight='bold')
+        ax[i_ax,0].legend(ncols=5, fontsize=7.5, frameon=False)
+        ax[i_ax,1].set_xticklabels([])
+        ax[i_ax,1].tick_params(axis='x', length=0) 
+    else:
+        ax[i_ax,1].set_xticklabels([])
+        ax[i_ax,1].tick_params(axis='x', length=0) 
+fig.tight_layout()
+fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.pdf", dpi=300, format='pdf')
+plt.close()
+print("*****************************")
+
+# Using Random survival forest
+# INFO on the minimum number of samples per leaf:
+#    - For 6 and 7 the performance is bad (barely above .5)
+#    - For 15 the performance increase and the results are more similar to the ones obtained by the Cox models
+#    - For 25 the performance increase slightly more and the results are more similar to the ones obtained by the Cox models
+#    - For 40 the performance is similar to the case of 15 and 20
+for min_samples_leaf in [6,15,25,30]:
+    print(f"Minimum No. samples per leafs in the trees: {min_samples_leaf}")
+    fig, ax = plt.subplots(len(N_splits),2, figsize=(16,5*len(N_splits)), gridspec_kw={'width_ratios': [2, 1]}) # TODO add a row for each split tried
+    for i_ax, splits in enumerate(N_splits):
+        print(f"No. of splits: {splits}")
+        times_auc = times_auc_split[splits] 
+        print(f"         {morphology_tissues.columns[i][:-8]}")
+        DynAUC = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs), len(times_auc))) * np.nan
+        DynAUC_average = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs))) * np.nan
+        for i in range(1,len(morphology_tissues.columns)):
+            x = morphology_tissues[morphology_tissues.columns[i]]
+            y = morphology_tissues["OS"]    
+            # Remove rows where x, y, or life is NaN
+            mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+            x_clean = x[mask]
+            y_clean = y[mask]
+            life_clean = life[mask]
+            # Censoring (based on the status variable)
+            OS_STATS = []
+            OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
+            OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+            # KFold and survival prediction
+            RKF = RepeatedKFold(n_splits=splits, n_repeats=runs)
+            fails = 0
+            for j, (train_index, test_index) in enumerate(RKF.split(x_clean, OS_STATS)):
+                # MODEL 2: Random survival forest
+                RSFmodel = RandomSurvivalForest(n_estimators=100, min_samples_leaf=min_samples_leaf)
+                RSFmodel.fit(x_clean.values[train_index].reshape(-1,1), OS_STATS[train_index])
+                RSFmodel.predict_cumulative_hazard_function(x_clean.values[test_index].reshape(-1,1), return_array=False)
+                try:
+                    RSFpreds = rsf_risk_scores = np.vstack(
+                        [chf(times_auc) for chf in RSFmodel.predict_cumulative_hazard_function(x_clean.values[test_index].reshape(-1,1), return_array=False)]
+                    )
+                    DynAUC[i-1,j,:], DynAUC_average[i-1,j] = cumulative_dynamic_auc(
+                        OS_STATS,#[train_index]
+                        OS_STATS[test_index],
+                        RSFpreds,
+                        times=times_auc
+                    )
+                except:
+                    fails += 1
+                    print(f"The times were not within the follow-up time range of test data. {round(100*fails/(runs*splits),2)}% of the runs have been ignored so far.")
+
+            # TODO: Implement permutation procedure for the calculation of pvalues
+            ax[i_ax,0].plot(times_auc/daysXmonth, np.nanmean(DynAUC[i-1], axis=0), '-o', linewidth=0.5, markersize=8, label=morphology_tissues.columns[i][:-8], color=colors[i-1], alpha=.5)
+        ax[i_ax,0].hlines(0.5, -3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3, color='black', linewidth=.75, linestyle='--', alpha=.5)
+        ax[i_ax,0].spines[["top","right"]].set_visible(False)
+        ax[i_ax,0].set_xlim([-3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3])
+        ax[i_ax,0].set_xticks(times_auc/daysXmonth)
+        ax[i_ax,0].set_xticklabels(np.int32(times_auc/daysXmonth))
+        ax[i_ax,0].set_ylim([.3,.7])
+        ax[i_ax,0].set_yticks([.3,.4,.5,.6,.7])
+        ax[i_ax,0].set_ylabel("Cumulative dynamic AUC(t)")
+        ax[i_ax,0].set_title(f"No. of splits: {splits}", fontweight='bold')
+        ax[i_ax,0].set_xlabel("Survival at time (months)")
+        ax[i_ax,1].bar(
+            [morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in range(len(morphology_tissues.columns)-1)],
+            np.nanmean(DynAUC_average, axis=1),
+            edgecolor="black",
+            color=["blue" if i in np.nanmean(DynAUC_average, axis=1).argsort()[-2:]  else "lightgrey" for i in range(len(morphology_tissues.columns)-1)]
+        )
+        ax[i_ax,1].hlines(0.5, -1, len(morphology_tissues.columns), color='black', linewidth=.75, linestyle='--', alpha=.5)
+        ax[i_ax,1].spines[["top","right","left"]].set_visible(False)
+        ax[i_ax,1].set_xlim([-1, len(morphology_tissues.columns)-1])
+        ax[i_ax,1].set_xticks(range(0, len(morphology_tissues.columns)-1))
+        ax[i_ax,1].set_ylim([0.3,0.7])
+        ax[i_ax,1].set_yticks([.3,.4,.5,.6,.7])
+        ax[i_ax,1].set_yticklabels([])
+        ax[i_ax,1].tick_params(axis='y', length=0) 
+        if i_ax==(len(N_splits)-1):
+            ax[i_ax,1].set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in range(len(morphology_tissues.columns)-1)], rotation=75, fontsize=8)
+        elif i_ax==0:
+            ax[i_ax,1].set_title("Average AUC(t)", fontweight='bold')
+            ax[i_ax,0].legend(ncols=5, fontsize=7.5, frameon=False)
+            ax[i_ax,1].set_xticklabels([])
+            ax[i_ax,1].tick_params(axis='x', length=0) 
+        else:
+            ax[i_ax,1].set_xticklabels([])
+            ax[i_ax,1].tick_params(axis='x', length=0) 
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.pdf", dpi=300, format='pdf')
+    plt.close()
+    print("*****************************")
+"""
+# Using an SVClassifier to predict survival
+splits = 8 # Determine whether 8 is a good number or we should experiment more
+colors = ["black", "forestgreen", "purple", "cornflowerblue"]
+for model in ["linear","rbf"]:# 
+    for plow, phigh in [(25,75),(50,50)]:
+        print(f"{model} SVC: Percentiles ({plow},{phigh})")
+        fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
+        fig_bis, ax_bis = plt.subplots(nrows, ncols, figsize=figsize)
+        ax = ax.flatten()
+        ax_bis = ax_bis.flatten()
+        for i in range(1,len(morphology_tissues.columns)):
+            x = morphology_tissues[morphology_tissues.columns[i]]
+            y = morphology_tissues["OS"]    
+            # Remove rows where x or y is NaN
+            mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+            x_clean = x[mask]
+            y_clean = y[mask]
+            life_clean = life[mask]    
+            # Results
+            metrics = {
+                "Balanced_accuracy": np.zeros((len(months),)) * np.nan, 
+                "Accuracy": np.zeros((len(months),)) * np.nan, 
+                #"PPV": np.zeros((len(months),)) * np.nan, 
+                "Recall": np.zeros((len(months),)) * np.nan, 
+            }
+            scoring = {
+                "Balanced_accuracy": make_scorer(balanced_accuracy_score), 
+                "Accuracy": make_scorer(accuracy_score),
+                #"PPV": make_scorer(precision_score),
+                "Recall": make_scorer(recall_score)
+            }
+            pv_s = {
+                "Balanced_accuracy": np.zeros((len(months),)) * np.nan, 
+                "Accuracy": np.zeros((len(months),)) * np.nan, 
+                #"PPV": np.zeros((len(months),)) * np.nan, 
+                "Recall": np.zeros((len(months),)) * np.nan, 
+            }
+            nums = np.zeros((len(months),2))
+            for j,m in enumerate(months):
+                print(f"         {morphology_tissues.columns[i][:-8]}: {m} months")
+                month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
+                tdi = x_clean[~month_mask]
+                y_month_mask = y_clean[~month_mask]
+                tdi_mask = (tdi>np.percentile(tdi, plow)) & (tdi<np.percentile(tdi, phigh)) # Discard value between percentiles (to reproduce Salvalaggio, et al. 2023)
+                tdi = tdi[~tdi_mask]
+                y_month_mask = y_month_mask[~tdi_mask]
+                died = np.where(y_month_mask>=m*daysXmonth, 0, 1)
+                nums[j,:] = [(1-died).sum(), died.sum()]
+                ax[i-1].text(m-2, -0.175, f"{int(nums[j,0])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="forestgreen") # Numbers alive
+                ax[i-1].text(m-2, -0.225, f"{int(nums[j,1])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="darkorange") # Numbers dead
+                tdi = tdi / max(tdi)
+                for kk, metric in enumerate(scoring.keys()):
+                    RSKF = RepeatedStratifiedKFold(n_splits=splits, n_repeats=runs)
+                    classifier = SVC(C=1, kernel=model, class_weight='balanced')
+                    cv_results, _, pv_results = permutation_test_score(#cross_validate(
+                        classifier,
+                        tdi.values.reshape(-1,1),
+                        y=died,
+                        scoring=scoring[metric],
+                        cv=RSKF,
+                        n_permutations=500,
+                        n_jobs=8
+                    )
+                    metrics[metric][j] = cv_results
+                    pv_s[metric][j] = pv_results   
+            for kk, metric in enumerate(scoring.keys()):
+                ax[i-1].plot(
+                    months+kk-2, 
+                    metrics[metric], 
+                    'o',
+                    label=metric, 
+                    linestyle='--', 
+                    color=colors[kk],
+                    alpha=.75
+                )
+                ax_bis[i-1].plot(
+                    months+kk-2, 
+                    pv_s[metric], 
+                    'o',
+                    label=metric, 
+                    linestyle='-', 
+                    color=colors[kk],
+                    alpha=.75
+                )
+                ax_bis[i-1].plot(
+                    months+kk-2, # if fwer: Holm's procedure // else: Benjamin-Hochberg
+                    multipletests(pv_s[metric], alpha=0.05, method='holm', is_sorted=False)[1] if fwer else fdrcorrection(pv_s[metric], alpha=0.05, method='p', is_sorted=False)[1],
+                    'o',
+                    label=metric+r"$_{ FWER}$" if fwer else metric+r"$_{ FDR}$", 
+                    linestyle='--', 
+                    color=colors[kk],
+                    alpha=.5
+                )
+            # Metrics
+            ax[i-1].text(months[0]-2, -0.125, "No. of samples", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+            ax[i-1].hlines(0.5, months[0]-5, months[-1]+5, color='black', linewidth=.75, linestyle='--', alpha=.5)
+            ax[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+            ax[i-1].spines[["top", "right"]].set_visible(False)
+            ax[i-1].set_ylabel("Metric (a.u.)", fontsize=12)
+            ax[i-1].set_xlabel("Death (months)", fontsize=12)
+            ax[i-1].set_xlim([months[0]-5, months[-1]+5])
+            ax[i-1].set_xticks(months)
+            ax[i-1].set_xticklabels(months)
+            ax[i-1].set_ylim([0,1])
+            ax[i-1].set_yticks([0, 0.25,0.5,0.6,0.7,0.8,1])
+            ax[i-1].set_yticklabels([0, 0.25,0.5,0.6,0.7,0.8,1])
+            ax[i-1].spines['bottom'].set_bounds(months[0], months[-1])
+            # Significance 
+            ax_bis[i-1].hlines(0.05, months[0]-5, months[-1]+5, color='red', linewidth=.75, linestyle='--', alpha=.5)
+            ax_bis[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+            ax_bis[i-1].spines[["top", "right"]].set_visible(False)
+            ax_bis[i-1].set_ylabel("P-value (a.u.)", fontsize=12)
+            ax_bis[i-1].set_xlabel("Death (months)", fontsize=12)
+            ax_bis[i-1].set_xlim([months[0]-5, months[-1]+5])
+            ax_bis[i-1].set_xticks(months)
+            ax_bis[i-1].set_xticklabels(months)
+            ax_bis[i-1].set_ylim([0.001,1])
+            ax_bis[i-1].set_yticks([0.001, 0.01, 0.05, 1])
+            ax_bis[i-1].set_yticklabels([0.001, 0.01, 0.05, 1])
+            ax_bis[i-1].spines['bottom'].set_bounds(months[0], months[-1])
+            ax_bis[i-1].set_yscale('log')
+            if (i-1)==0:
+                ax[i-1].legend(frameon=False, ncols=2, loc="upper right")
+                ax_bis[i-1].legend(frameon=False, ncols=1, loc="lower right")
+        fig.tight_layout()
+        fig_bis.tight_layout()
+        fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.pdf", dpi=300, format='pdf')
+        fig_bis.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.pdf", dpi=300, format='pdf')
+        plt.close(fig)
+        plt.close(fig_bis)
+
+"""
+# Using the TDI classifiers to compute the time-dependent AUC(t)
+for plow, phigh in [(25,75),(50,50)]:
+    print(f"TDI classifier: Percentiles ({plow},{phigh})")
+    fig, ax = plt.subplots(len(N_splits),2, figsize=(16,5*len(N_splits)), gridspec_kw={'width_ratios': [2, 1]})
+    for i_ax, splits in enumerate(N_splits):
+        print(f"No. of splits: {splits}")
+        times_auc = times_auc_split[splits] 
+        print(f"         {morphology_tissues.columns[i]}")
+        DynAUC = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs), len(times_auc))) * np.nan
+        DynAUC_average = np.zeros((len(morphology_tissues.columns)-1, int(splits*runs))) * np.nan
+        for i in range(1,len(morphology_tissues.columns)):
+            x = morphology_tissues[morphology_tissues.columns[i]]
+            y = morphology_tissues["OS"]    
+            # Remove rows where x, y, or life is NaN
+            mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+            x_clean = x[mask]
+            y_clean = y[mask]
+            life_clean = life[mask]
+            # Censoring (based on the status variable)
+            OS_STATS = []
+            OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
+            OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
+            # KFold and survival prediction
+            RKF = RepeatedKFold(n_splits=splits, n_repeats=runs)
+            fails = 0
+            for j, (train_index, test_index) in enumerate(RKF.split(x_clean, OS_STATS)):
+                # MODEL 4: TDI features
+                try:
+                    DynAUC[i-1,j,:], DynAUC_average[i-1,j] = cumulative_dynamic_auc(
+                        OS_STATS,#[train_index]
+                        OS_STATS[test_index],
+                        x_clean.values[test_index],
+                        times=times_auc
+                    )
+                except:
+                    fails += 1
+                    print(f"The times were not within the follow-up time range of test data. {round(100*fails/(runs*splits),2)}% of the runs have been ignored so far.")
+
+            # TODO: Implement permutation procedure for the calculation of pvalues
+            ax[i_ax,0].plot(times_auc/daysXmonth, np.nanmean(DynAUC[i-1], axis=0), '-o', linewidth=0.5, markersize=8, label=morphology_tissues.columns[i], color=colors[i-1], alpha=.5)
+        ax[i_ax,0].hlines(0.5, -3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3, color='black', linewidth=.75, linestyle='--', alpha=.5)
+        ax[i_ax,0].spines[["top","right"]].set_visible(False)
+        ax[i_ax,0].set_xlim([-3+times_auc[0]/daysXmonth, times_auc[-1]/daysXmonth+3])
+        ax[i_ax,0].set_xticks(times_auc/daysXmonth)
+        ax[i_ax,0].set_xticklabels(np.int32(times_auc/daysXmonth))
+        ax[i_ax,0].set_ylim([.3,.7])
+        ax[i_ax,0].set_yticks([.3,.4,.5,.6,.7])
+        ax[i_ax,0].set_ylabel("Cumulative dynamic AUC(t)")
+        ax[i_ax,0].set_title(f"No. of splits: {splits}", fontweight='bold')
+        ax[i_ax,0].set_xlabel("Survival at time (months)")
+        ax[i_ax,1].bar(
+            morphology_tissues.columns[1:],
+            np.nanmean(DynAUC_average, axis=1),
+            edgecolor="black",
+            color=["blue" if i in np.nanmean(DynAUC_average, axis=1).argsort()[-3:]  else "lightgrey" for i in range(len(morphology_tissues.columns)-1)]
+        )
+        ax[i_ax,1].hlines(0.5, -1, len(morphology_tissues.columns), color='black', linewidth=.75, linestyle='--', alpha=.5)
+        ax[i_ax,1].spines[["top","right","left"]].set_visible(False)
+        ax[i_ax,1].set_xlim([-1, len(morphology_tissues.columns)-1])
+        ax[i_ax,1].set_xticks(range(0, len(morphology_tissues.columns)-1))
+        ax[i_ax,1].set_ylim([0.3,0.7])
+        ax[i_ax,1].set_yticks([.3,.4,.5,.6,.7])
+        ax[i_ax,1].set_yticklabels([])
+        ax[i_ax,1].tick_params(axis='y', length=0) 
+        if i_ax==(len(N_splits)-1):
+            ax[i_ax,1].set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii in range(len(morphology_tissues.columns)-1)], rotation=75, fontsize=8)
+        elif i_ax==0:
+            ax[i_ax,1].set_title("Average AUC(t)", fontweight='bold')
+            ax[i_ax,0].legend(ncols=5, fontsize=7.5, frameon=False)
+            ax[i_ax,1].set_xticklabels([])
+            ax[i_ax,1].tick_params(axis='x', length=0) 
+        else:
+            ax[i_ax,1].set_xticklabels([])
+            ax[i_ax,1].tick_params(axis='x', length=0) 
+    fig.tight_layout()
+    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.pdf", dpi=300, format='pdf')
+    plt.close(fig)
+
+# Using the TDI classifiers to compute the AUC at different survival times
+months = [12,24,36,48]
+colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#9467BD"]
+for plow, phigh in percentiles2check:
+    print(f"TDI classifier: Percentiles ({plow},{phigh})")
+    fig_roc, ax_roc = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_roc = ax_roc.flatten()
+    fig_auc, ax_auc = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_auc = ax_auc.flatten()
+    fig_acc, ax_acc = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_acc = ax_acc.flatten()
+    fig_bacc, ax_bacc = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_bacc = ax_bacc.flatten()
+    for i in range(1,len(morphology_tissues.columns)):
+        x = morphology_tissues[morphology_tissues.columns[i]]
+        y = morphology_tissues["OS"]    
+        # Remove rows where x, y, or life is NaN
+        mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
+        x_clean = x[mask]
+        y_clean = y[mask]
+        life_clean = life[mask]
+        # pvals
+        perm_auc, perm_acc, perm_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        p_auc, p_acc, p_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        for j,m in enumerate(months):
+            print(f"         {morphology_tissues.columns[i]}: {m} months")
+            month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
+            tdi = x_clean[~month_mask]
+            y_month_mask = y_clean[~month_mask]
+            tdi_mask = (tdi>np.percentile(tdi, plow)) & (tdi<np.percentile(tdi, phigh)) # Discard value between percentiles (to emualte Salvalaggio, et al. 2023)
+            tdi = tdi[~tdi_mask]
+            y_month_mask = y_month_mask[~tdi_mask]
+            died = np.where(y_month_mask>=(m*daysXmonth), 0, 1)
+            fpr, tpr, thresholds = roc_curve(died, tdi)
+            # Metrics
+            optimal_idx = np.argmax(tpr - fpr)
+            optimal_th = thresholds[optimal_idx]
+            death_preds = np.where(tdi>=optimal_th, 1, 0)
+            auc = roc_auc_score(died, tdi)
+            acc = accuracy_score(died, death_preds)
+            bacc = balanced_accuracy_score(died, death_preds)
+            # Permute labels to compute the significance of the metrics
+            pop_auc, pop_acc, pop_bacc = [], [], []
+            for _ in range(n_perms):
+                perm_deaths = np.random.permutation(died)
+                pop_auc.append(roc_auc_score(perm_deaths, tdi))
+                pop_acc.append(accuracy_score(perm_deaths, death_preds))
+                pop_bacc.append(balanced_accuracy_score(perm_deaths, death_preds))
+            p_auc[j], p_acc[j], p_bacc[j] = np.mean(np.array(pop_auc) >= auc), np.mean(np.array(pop_acc) >= acc), np.mean(np.array(pop_bacc) >= bacc)
+            perm_auc[j], perm_acc[j], perm_bacc[j] = np.mean(np.array(pop_auc)), np.mean(np.array(pop_acc)), np.mean(np.array(pop_bacc))
+            # Plots
+            ax_roc[i-1].plot(fpr, tpr, linestyle='-', linewidth=2.5, color=colors[j], label=f"Death at {m} months", alpha=.8) # Plot ROC
+            ax_roc[i-1].plot(fpr[optimal_idx], tpr[optimal_idx], 'o', markersize=15, color=colors[j], markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
+            ax_roc[i-1].plot([fpr[optimal_idx],fpr[optimal_idx]],[fpr[optimal_idx],tpr[optimal_idx]], linestyle='--', linewidth=1.5, color="gray")           
+            ax_auc[i-1].bar(m, auc, color="cornflowerblue" if p_auc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot AUC           
+            ax_acc[i-1].bar(m, acc, color="cornflowerblue" if p_acc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Accuracy          
+            ax_bacc[i-1].bar(m, bacc, color="cornflowerblue" if p_bacc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Balanced accuracy 
+        if fwer: # Method: Holm's procedure
+            _, p_auc_corr, _, _ = multipletests(p_auc, alpha=0.05, method='holm', is_sorted=False)
+            _, p_acc_corr, _, _ = multipletests(p_acc, alpha=0.05, method='holm', is_sorted=False)
+            _, p_bacc_corr, _, _ = multipletests(p_bacc, alpha=0.05, method='holm', is_sorted=False)
+        else: # Method: Benjamin-Hochberg
+            _, p_auc_corr = fdrcorrection(p_auc, alpha=0.05, method='p', is_sorted=False)
+            _, p_acc_corr = fdrcorrection(p_acc, alpha=0.05, method='p', is_sorted=False)
+            _, p_bacc_corr = fdrcorrection(p_bacc, alpha=0.05, method='p', is_sorted=False)
+        # Axes ROC
+        ax_roc[i-1].plot([0,1],[0,1], linestyle='--', linewidth=.5, color="k")
+        ax_roc[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+        ax_roc[i-1].spines[["top", "right"]].set_visible(False)
+        ax_roc[i-1].set_xlim([-.05,1.05])
+        ax_roc[i-1].set_xticks([0,0.5,1])
+        ax_roc[i-1].set_xlabel("False positive rate (FPR)", fontsize=12)
+        ax_roc[i-1].spines['bottom'].set_bounds(0,1)
+        ax_roc[i-1].set_ylim([0,1])
+        ax_roc[i-1].set_yticks([0,0.5,1])
+        ax_roc[i-1].set_ylabel("True positive rate (TPR)", fontsize=12)
+        ax_roc[i-1].spines['left'].set_bounds(0,1)
+        # Axes AUC
+        ax_auc[i-1].plot(months, perm_auc, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_auc[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+        ax_auc[i-1].spines[["top", "right"]].set_visible(False)
+        ax_auc[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_auc[i-1].set_xticks(months)
+        ax_auc[i-1].set_xlabel("Death (months)")
+        ax_auc[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_auc[i-1].set_ylim([0.25,1])
+        ax_auc[i-1].set_yticks([0.25,0.5,0.6,0.7,0.8,1])
+        ax_auc[i-1].set_ylabel("Area Under the Curve (AUC)")
+        # Axes ACC
+        ax_acc[i-1].plot(months, perm_acc, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_acc[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+        ax_acc[i-1].spines[["top", "right"]].set_visible(False)
+        ax_acc[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_acc[i-1].set_xticks(months)
+        ax_acc[i-1].set_xlabel("Death (months)")
+        ax_acc[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_acc[i-1].set_ylim([0.25, 1])
+        ax_acc[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_acc[i-1].set_ylabel("Accuracy")
+        # Axes BACC
+        ax_bacc[i-1].plot(months, perm_bacc, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_bacc[i-1].set_title(morphology_tissues.columns[i][:-8], fontweight="bold", fontsize=12)
+        ax_bacc[i-1].spines[["top", "right"]].set_visible(False)
+        ax_bacc[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_bacc[i-1].set_xticks(months)
+        ax_bacc[i-1].set_xlabel("Death (months)")
+        ax_bacc[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_bacc[i-1].set_ylim([0.25, 1])
+        ax_bacc[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_bacc[i-1].set_ylabel("Balanced Accuracy")     
+        # Significance and adjusted significance
+        for j,m in enumerate(months):
+            # AUC
+            if p_auc[j]<=0.001:
+                ax_auc[i-1].text(m-1.5, 0.9, '***', color='black',fontsize=10)
+            elif p_auc[j]<=0.01:
+                ax_auc[i-1].text(m-1, 0.9, '**', color='black',fontsize=10)
+            elif p_auc[j]<=0.05:
+                ax_auc[i-1].text(m-.5, 0.9, '*', color='black',fontsize=10)
+            else:            
+                ax_auc[i-1].text(m-1.5, 0.9, 'n.s.', color='black',fontsize=10)
+            if p_auc_corr[j]<=0.001:
+                ax_auc[i-1].text(m-1.5, 0.95, '***', color='blue',fontsize=10)
+            elif p_auc_corr[j]<=0.01:
+                ax_auc[i-1].text(m-1, 0.95, '**', color='blue',fontsize=10)
+            elif p_auc_corr[j]<=0.05:
+                ax_auc[i-1].text(m-.5, 0.95, '*', color='blue',fontsize=10)
+            else:            
+                ax_auc[i-1].text(m-1.5, 0.95, 'n.s.', color='blue',fontsize=10)  
+            # Accuracy significance labels
+            if p_acc[j] <= 0.001:
+                ax_acc[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_acc[j] <= 0.01:
+                ax_acc[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_acc[j] <= 0.05:
+                ax_acc[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_acc[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)            
+            if p_acc_corr[j] <= 0.001:
+                ax_acc[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_acc_corr[j] <= 0.01:
+                ax_acc[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_acc_corr[j] <= 0.05:
+                ax_acc[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_acc[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # Balanced Accuracy significance labels
+            if p_bacc[j] <= 0.001:
+                ax_bacc[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_bacc[j] <= 0.01:
+                ax_bacc[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_bacc[j] <= 0.05:
+                ax_bacc[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_bacc[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_bacc_corr[j] <= 0.001:
+                ax_bacc[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_bacc_corr[j] <= 0.01:
+                ax_bacc[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_bacc_corr[j] <= 0.05:
+                ax_bacc[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_bacc[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+        if i==1:
+            ax_roc[i-1].legend(frameon=False)
+    fig_roc.tight_layout()
+    fig_roc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.pdf", dpi=300, format='pdf')
+    plt.close(fig_roc)          
+    fig_auc.tight_layout()
+    fig_auc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.pdf", dpi=300, format='pdf')
+    plt.close(fig_auc)          
+    fig_acc.tight_layout()
+    fig_acc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.pdf", dpi=300, format='pdf')
+    plt.close(fig_acc)          
+    fig_bacc.tight_layout()
+    fig_bacc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.pdf", dpi=300, format='pdf')
+    plt.close(fig_bacc)      
+    print("**************************")
