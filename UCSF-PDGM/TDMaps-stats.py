@@ -34,13 +34,15 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score, make_scorer
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument("path", type=str, help="Path to the directory where the TDI and survival data are stored")
 parser.add_argument("--threshold", type=int, default=0, help="Streamline density threshold")
 parser.add_argument("--correction", type=str, choices=["fwer","fdr"], default="fdr", help="Multiple hypotheses correction method")
+parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
 args = parser.parse_args()
 
 stream_th = args.threshold
 fwer = True if args.correction=="fwer" else False
-daysXmonth = 30
+daysXmonth = 365/12 
 percentiles2check = (20,80),(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
 n_resamples = 2500 # Bottstrapping and permutation of correlation values
 n_perms = 5000 # Permutation of Cox Prop Hazard models
@@ -49,9 +51,9 @@ months = np.array([6,12,18,24,30,36,42,48])
 nrows, ncols = 2, 5
 figsize = (25,12)
 figs_folder = f"StreamlineTDThreshold-{stream_th}_GBM-Wildtype"
-os.makedirs("../Figures/TDMaps_Grade-IV/"+figs_folder, exist_ok=True)
+os.makedirs(os.path.join(args.path, "Figures/TDMaps_Grade-IV",figs_folder), exist_ok=True)
 
-demographics_TD = pd.read_csv(f"../Figures/TDMaps_Grade-IV/demographics-TDMaps_streamTH-{stream_th}.csv")
+demographics_TD = pd.read_csv(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/demographics-TDMaps_streamTH-{stream_th}.csv"))
 TDMaps_all = demographics_TD[
     [
         "OS",
@@ -71,9 +73,9 @@ TDMaps_all = demographics_TD[
 
 TDMaps_all = TDMaps_all.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 TDMaps_all = TDMaps_all.loc[demographics_TD["OS"].fillna('unknown')!='unknown']
-TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT status"].isin(["positive", "negative"])]
-TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT index"].fillna('unknown')!='unknown']
-TDMaps_all = TDMaps_all.loc[demographics_TD["1p/19q"].fillna('unknown').isin(["intact", "unknown"])]
+#TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT status"].isin(["positive", "negative"])]
+#TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT index"].fillna('unknown')!='unknown']
+#TDMaps_all = TDMaps_all.loc[demographics_TD["1p/19q"].fillna('unknown').isin(["intact", "unknown"])]
 
 TDMaps = TDMaps_all#.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 life = TDMaps_all["1-dead 0-alive"].values
@@ -101,7 +103,7 @@ stats_string += f"No. of patients with a registered event (1-dead/0-alive): {a}\
 stats_string += f"No. of dead patients (without right censoring): {b} ({round(100*b/a,2)}%)\n"
 stats_string += f"No. of patients with right censoring: {c} ({round(100*c/a,2)}%)\n"
 
-with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt", "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 ####################################################################################################################################################################
@@ -160,7 +162,7 @@ ax3.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=1)
 ax6.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=0)", fontweight='bold', fontsize=12)
 ax3.tick_params(axis='both', length=0) 
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/correlation-TDMaps.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/correlation-TDMaps.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -195,7 +197,7 @@ for status in [0,1]:
         ax[i-1].set_ylabel("Overall survival (months)", fontweight="bold", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_scatter_status-{status}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_scatter_status-{status}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -266,7 +268,7 @@ for i in range(1,len(TDMaps.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
@@ -334,7 +336,7 @@ for i in range(1,len(TDMaps.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -467,9 +469,9 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
                 k_ax += 1
         fig.tight_layout()
         if status==1:
-            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_death-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_death-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         else:
-            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+            fig.savefig(os.path.join(args.path, f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         plt.close()
 
     ## Median survival analyses
@@ -506,7 +508,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         ax[i-1].set_ylabel("Overall survival (months)", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with dead subjects
@@ -576,7 +578,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with censoring
@@ -647,7 +649,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -716,7 +718,7 @@ for i in range(len(TDMaps.columns)-1):
         ax[i,1].set_xlabel("Percentiles", fontweight='bold')
         ax[i,2].set_xlabel("Percentiles", fontweight='bold')
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.{args.format}"), dpi=300, format=args.format)
 plt.close()
 print("FINISHED SURVIVAL AND KAPLAN-MEIER ANALYSES")
 print("   ************************   ")
@@ -803,7 +805,7 @@ ax.set_xticklabels([TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-
 ax.spines['bottom'].set_bounds(0,len(TDMaps.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 # Plot the prediction
@@ -855,7 +857,7 @@ for i in range(0,len(TDMaps.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 stats_string += "------------------------------\n"
@@ -939,7 +941,7 @@ ax.set_xticklabels([TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-
 ax.spines['bottom'].set_bounds(0,len(TDMaps.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 # Plot the prediction
 start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
@@ -990,10 +992,10 @@ for i in range(0,len(TDMaps.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
-with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresTDI_CoxPHazard.txt", "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresTDI_CoxPHazard.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 print("FINISHED FEATURE IMPORTANCE USING COX PH MODELS AND C-index")
@@ -1112,7 +1114,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.{args.format}"), dpi=300, format=args.format)
 
 # Discard right censored data and possible nan values
 #feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-2] 
@@ -1204,7 +1206,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.{args.format}"), dpi=300, format=args.format)
 
 print("FINISHED FEATURE IMPORTANCE USING GRID SEARCH AND COX PH MODELS")
 print("   ************************   ")
@@ -1311,7 +1313,7 @@ for i_ax, splits in enumerate(N_splits):
         ax[i_ax,1].set_xticklabels([])
         ax[i_ax,1].tick_params(axis='x', length=0) 
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 # Using Random survival forest
@@ -1399,7 +1401,7 @@ for min_samples_leaf in [30]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
     plt.close()
     print("*****************************")
 
@@ -1529,8 +1531,8 @@ for model in ["linear","rbf"]:#
                 ax_bis[i-1].legend(frameon=False, ncols=1, loc="lower right")
         fig.tight_layout()
         fig_bis.tight_layout()
-        fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.pdf", dpi=300, format='pdf')
-        fig_bis.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.pdf", dpi=300, format='pdf')
+        fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
+        fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.{args.format}"), dpi=300, format=args.format)
         plt.close(fig)
         plt.close(fig_bis) """
 
@@ -1609,7 +1611,7 @@ for plow, phigh in [(25,75),(50,50)]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
 
 # Using the TDI classifiers to compute the AUC at different survival times
@@ -1778,15 +1780,15 @@ for plow, phigh in percentiles2check:
         if i==1:
             ax_roc[i-1].legend(frameon=False)
     fig_roc.tight_layout()
-    fig_roc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.pdf", dpi=300, format='pdf')
+    fig_roc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_roc)          
     fig_auc.tight_layout()
-    fig_auc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.pdf", dpi=300, format='pdf')
+    fig_auc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_auc)          
     fig_acc.tight_layout()
-    fig_acc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.pdf", dpi=300, format='pdf')
+    fig_acc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_acc)          
     fig_bacc.tight_layout()
-    fig_bacc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.pdf", dpi=300, format='pdf')
+    fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_bacc)      
     print("**************************")
