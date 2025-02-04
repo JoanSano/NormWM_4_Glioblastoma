@@ -99,32 +99,35 @@ for subject in "$BASE_DIR"/UPENN-GBM_data-raw_V3-organized/*; do
                     OUTPUT_regis="$MNI_DIR"/"$SUBJECT_DIR"/$(basename "$moving_IMAGE")
                     OUTPUT_regis=("${OUTPUT_regis%.*}")
                     OUTPUT_regis=("${OUTPUT_regis%.*}")
-
+                    
                     if [[ -f $moving_IMAGE ]]; then
                         echo "  Applying the warping to ${img}"
-                        
-                        if [[ "${moving_IMAGE}" != *segm* ]]; then
-                            N4BiasFieldCorrection -d 3 \
-                                -i "${moving_IMAGE}" \
-                                -o "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
-
-                            antsApplyTransforms -d 3 \
-                            -i "${OUTPUT_regis}_biasfieldcorrected.nii.gz" \
-                            -r "${MNI_TEMPLATE}".nii.gz \
-                            -o "${OUTPUT_regis}__Warped.nii.gz" \
-                            -t "${OUTPUT_NAME}"__1Warp.nii.gz \
-                            -t "${OUTPUT_NAME}"__0GenericAffine.mat \
-                            -n NearestNeighbor
-
-                            rm "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+                        if [[ -f "${OUTPUT_regis}__Warped.nii.gz" ]]; then
+                            echo "  Transformed ${img} already available! Skipping ..."
                         else
-                            antsApplyTransforms -d 3 \
-                                -i $moving_IMAGE \
+                            if [[ "${moving_IMAGE}" != *segm* ]]; then
+                                N4BiasFieldCorrection -d 3 \
+                                    -i "${moving_IMAGE}" \
+                                    -o "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+
+                                antsApplyTransforms -d 3 \
+                                -i "${OUTPUT_regis}_biasfieldcorrected.nii.gz" \
                                 -r "${MNI_TEMPLATE}".nii.gz \
                                 -o "${OUTPUT_regis}__Warped.nii.gz" \
                                 -t "${OUTPUT_NAME}"__1Warp.nii.gz \
                                 -t "${OUTPUT_NAME}"__0GenericAffine.mat \
                                 -n NearestNeighbor
+
+                                rm "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+                            else
+                                antsApplyTransforms -d 3 \
+                                    -i $moving_IMAGE \
+                                    -r "${MNI_TEMPLATE}".nii.gz \
+                                    -o "${OUTPUT_regis}__Warped.nii.gz" \
+                                    -t "${OUTPUT_NAME}"__1Warp.nii.gz \
+                                    -t "${OUTPUT_NAME}"__0GenericAffine.mat \
+                                    -n NearestNeighbor
+                            fi
                         fi
                     else
                         echo "  The NIFTI image '''${img}''' does not exist"
