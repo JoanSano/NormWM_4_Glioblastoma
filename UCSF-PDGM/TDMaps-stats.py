@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import os
 import argparse
+from tqdm import tqdm
 
 import matplotlib
 matplotlib.use('Agg')
@@ -471,7 +472,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if status==1:
             fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_death-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         else:
-            fig.savefig(os.path.join(args.path, f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         plt.close()
 
     ## Median survival analyses
@@ -751,7 +752,7 @@ for i in range(1,len(TDMaps.columns)):
     Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
     HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
     pop = []
-    for _ in range(n_perms):
+    for _ in tqdm(range(n_perms), desc=f"Cox feature selection for the marker: {TDMaps.columns[i]}"):
         perm_OS_STATS = np.random.permutation(OS_STATS)
         p_Cmodel = CoxPHSurvivalAnalysis()
         p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
@@ -887,7 +888,7 @@ for i in range(1,len(TDMaps.columns)):
     Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
     HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
     pop = []
-    for _ in range(n_perms):
+    for _ in tqdm(range(n_perms), desc=f"Cox feature selection for the marker (status = 1): {TDMaps.columns[i]}"):
         perm_OS_STATS = np.random.permutation(OS_STATS)
         p_Cmodel = CoxPHSurvivalAnalysis()
         p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
@@ -992,7 +993,7 @@ for i in range(0,len(TDMaps.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresTDI_CoxPHazard.txt"), "w") as stats_file:
