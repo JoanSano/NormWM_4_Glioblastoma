@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import argparse
 from tqdm import tqdm
+import json
 
 import matplotlib
 matplotlib.use('Agg')
@@ -81,7 +82,7 @@ TDMaps_all = TDMaps_all.loc[demographics_TD["OS"].fillna('unknown')!='unknown']
 TDMaps = TDMaps_all#.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 life = TDMaps_all["1-dead 0-alive"].values
 TDMaps = TDMaps.drop(columns="1-dead 0-alive")
-
+"""
 ####################################################################################################################################################################
 ## General numbers
 ####################################################################################################################################################################
@@ -1405,7 +1406,7 @@ for min_samples_leaf in [30]:
     fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
     plt.close()
     print("*****************************")
-
+"""
 """ # Using an SVClassifier to predict survival
 splits = 8 # Determine whether 8 is a good number or we should experiment more
 colors = ["black", "forestgreen", "purple", "cornflowerblue"]
@@ -1536,7 +1537,7 @@ for model in ["linear","rbf"]:#
         fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.{args.format}"), dpi=300, format=args.format)
         plt.close(fig)
         plt.close(fig_bis) """
-
+"""
 # Using the TDI classifiers to compute the time-dependent AUC(t)
 for plow, phigh in [(25,75),(50,50)]:
     print(f"TDI classifier: Percentiles ({plow},{phigh})")
@@ -1614,11 +1615,14 @@ for plow, phigh in [(25,75),(50,50)]:
     fig.tight_layout()
     fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
+"""
 
 # Using the TDI classifiers to compute the AUC at different survival times
 months = [12,24,36,48]
 colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#9467BD"]
-for plow, phigh in percentiles2check:
+TRUE_DEATHS, TDI_data = dict(), dict() # Record ground truths and indices to perform delong test between pairs of ROCs
+for plow, phigh in percentiles2check:    
+    TRUE_DEATHS[f"({plow}, {phigh})"], TDI_data[f"({plow}, {phigh})"] = dict(), dict()
     print(f"TDI classifier: Percentiles ({plow},{phigh})")
     fig_roc, ax_roc = plt.subplots(nrows, ncols, figsize=figsize)
     ax_roc = ax_roc.flatten()
@@ -1639,6 +1643,7 @@ for plow, phigh in percentiles2check:
         # pvals
         perm_auc, perm_acc, perm_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
         p_auc, p_acc, p_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        TRUE_DEATHS[f"({plow}, {phigh})"][TDMaps.columns[i]], TDI_data[f"({plow}, {phigh})"][TDMaps.columns[i]] = dict(), dict()
         for j,m in enumerate(months):
             print(f"         {TDMaps.columns[i]}: {m} months")
             month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
@@ -1649,6 +1654,8 @@ for plow, phigh in percentiles2check:
             y_month_mask = y_month_mask[~tdi_mask]
             died = np.where(y_month_mask>=m*daysXmonth, 0, 1)
             fpr, tpr, thresholds = roc_curve(died, tdi)
+            TRUE_DEATHS[f"({plow}, {phigh})"][TDMaps.columns[i]][m] = died
+            TDI_data[f"({plow}, {phigh})"][TDMaps.columns[i]][m] = tdi.to_numpy()
             # Metrics
             optimal_idx = np.argmax(tpr - fpr)
             optimal_th = thresholds[optimal_idx]
@@ -1793,3 +1800,51 @@ for plow, phigh in percentiles2check:
     fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_bacc)      
     print("**************************")
+
+for i in range(1,len(TDMaps.columns)):
+    feature_TDI = TDMaps.columns[i]
+    fig, ax = plt.subplots(len(percentiles2check), len(months), figsize=(6*len(months),5*len(percentiles2check)))
+    for k, (plow, phigh) in enumerate(percentiles2check):    
+        for j, m in enumerate(months):
+            death = TRUE_DEATHS[f"({plow}, {phigh})"][feature_TDI][m]
+            scaled = TDI_data[f"({plow}, {phigh})"][feature_TDI][m].to_numpy()
+            scaled = (scaled - scaled.min())/(scaled.max()-scaled.min())
+            fpr, tpr, thresholds = roc_curve(death, scaled)
+            optimal_idx = np.argmax(tpr - fpr)
+            optimal_th = thresholds[optimal_idx]
+            death_preds = np.where(scaled>=optimal_th, 1, 0)
+
+            scaled_survived = scaled[death==0]
+            low_scaled_tn = scaled_survived[scaled_survived<=optimal_th]
+            low_scaled_fp = scaled_survived[scaled_survived>optimal_th]
+            scaled_died = scaled[death==1]
+            low_scaled_fn = scaled_died[scaled_died<=optimal_th]
+            low_scaled_tp = scaled_died[scaled_died>optimal_th]
+
+            ax[k,j].hist(low_scaled_tn, histtype="bar", density=False, cumulative=False, bins=20, color="forestgreen", label="Survived")
+            ax[k,j].hist(low_scaled_fp, histtype="step", density=False, cumulative=False, bins=20, color="forestgreen", linewidth=2)
+            ax[k,j].hist(low_scaled_tp, histtype="bar", density=False, cumulative=False, bins=20, color="darkorange", weights=-np.ones_like(low_scaled_tp), label="Died")
+            ax[k,j].hist(low_scaled_fn, histtype="step", density=False, cumulative=False, bins=20, color="darkorange", weights=-np.ones_like(low_scaled_fn), linewidth=2)
+
+            ax[k,j].hlines(0, -.05, 1051, linestyle='-', linewidth=1, color='black')
+            ax[k,j].vlines(optimal_th, -12, 12, linestyle='--', linewidth=2, color="black")
+            ax[k,j].set_xlim([-0.1,1.1])
+            
+            ax[k,j].set_xticks([])
+            ax[k,j].set_yticks([])
+            if "lesion" in feature_TDI:
+                ax[k,j].set_xlabel("L-TDI (a.u.)", fontsize=15)
+            else:
+                ax[k,j].set_xlabel("TDI (a.u.)", fontsize=15)
+            if j==0:
+                ax[k,j].spines[["top", "right", "bottom"]].set_visible(False)
+                ax[k,j].set_ylabel(f"Stratification threshold {plow}/{phigh}"+r'$^{th}$'+" percentiles", fontsize=15)
+            else:
+                ax[k,j].spines[["top", "right", "bottom","left"]].set_visible(False)
+            if k==0:
+                ax[k,j].set_title(f"Prediction at {m} months", fontweight='bold', fontsize=12)
+            ax[k,j].legend(frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig)
