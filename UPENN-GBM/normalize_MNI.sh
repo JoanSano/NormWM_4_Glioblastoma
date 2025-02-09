@@ -39,6 +39,12 @@ for subject in "$BASE_DIR"/UPENN-GBM_data-raw_V3-organized/*; do
             if [[ -f "${OUTPUT_NAME}__1Warp.nii.gz" ]]; then
                 echo "  Transformation already available"
             else
+                ### Perform bias field correction
+                echo "Running N4BiasFieldCorrection on ${SUBJECT_DIR}"
+                N4BiasFieldCorrection -d 3 \
+                    -i "$REFERENCE_IMAGE" \
+                    -o "${OUTPUT_NAME}_biasfieldcorrected.nii.gz"
+
                 MASK_NAME=$(find "$subject" -name "*_segm.nii.gz")
                 if [[ ! -f "$MASK_NAME" ]]; then
                     MASK_NAME=$(find "$subject" -name "*_automated_approx_segm.nii.gz")
@@ -47,23 +53,26 @@ for subject in "$BASE_DIR"/UPENN-GBM_data-raw_V3-organized/*; do
                 fslmaths "$MASK_NAME" -bin "$INVERSE_MASK"
                 ImageMath 3 ${INVERSE_MASK} Neg ${INVERSE_MASK}
 
-                ### Perform bias field correction
-                echo "Running N4BiasFieldCorrection on ${SUBJECT_DIR}"
-                N4BiasFieldCorrection -d 3 \
-                    -i "$REFERENCE_IMAGE" \
-                    -o "${OUTPUT_NAME}_biasfieldcorrected.nii.gz"
-
                 ### Run the antsRegistrationSyN.sh command ###
-                echo "Running antsRegistrationSyNQuick on ${SUBJECT_DIR}"
-                antsRegistrationSyNQuick.sh -d 3 \
-                    -f "${MNI_TEMPLATE}.nii.gz" \
-                    -m "${OUTPUT_NAME}_biasfieldcorrected.nii.gz" \
-                    -o "${OUTPUT_NAME}"__ \
-                    -j 1 \
-                    -x "${MNI_TEMPLATE}_mask.nii.gz" "$INVERSE_MASK" \
-                    -n 4 # Number of threads. BE CAREFUL TO MATCH THE NUMBER OF PROCESSES AND THE NUMBER OF CPU CORES IN THE MACHINE
+                if [[ -f "$MASK_NAME" ]]; then
+                    echo "Running antsRegistrationSyNQuick on ${SUBJECT_DIR} with an inverse lesion mask"
+                    antsRegistrationSyNQuick.sh -d 3 \
+                        -f "${MNI_TEMPLATE}.nii.gz" \
+                        -m "${OUTPUT_NAME}_biasfieldcorrected.nii.gz" \
+                        -o "${OUTPUT_NAME}"__ \
+                        -j 1 \
+                        -x "${MNI_TEMPLATE}_mask.nii.gz" "$INVERSE_MASK" 
 
-                rm "$INVERSE_MASK"
+                    rm "$INVERSE_MASK"
+                else
+                    echo "Running antsRegistrationSyNQuick on ${SUBJECT_DIR} WITHOUT an inverse lesion mask"
+                    antsRegistrationSyNQuick.sh -d 3 \
+                        -f "${MNI_TEMPLATE}.nii.gz" \
+                        -m "${OUTPUT_NAME}_biasfieldcorrected.nii.gz" \
+                        -o "${OUTPUT_NAME}"__ \
+                        -j 1 \
+                        -x "${MNI_TEMPLATE}_mask.nii.gz"
+                fi
                 rm "${OUTPUT_NAME}_biasfieldcorrected.nii.gz"
             fi
 
@@ -99,32 +108,35 @@ for subject in "$BASE_DIR"/UPENN-GBM_data-raw_V3-organized/*; do
                     OUTPUT_regis="$MNI_DIR"/"$SUBJECT_DIR"/$(basename "$moving_IMAGE")
                     OUTPUT_regis=("${OUTPUT_regis%.*}")
                     OUTPUT_regis=("${OUTPUT_regis%.*}")
-
+                    
                     if [[ -f $moving_IMAGE ]]; then
                         echo "  Applying the warping to ${img}"
-                        
-                        if [[ "${moving_IMAGE}" != *segm* ]]; then
-                            N4BiasFieldCorrection -d 3 \
-                                -i "${moving_IMAGE}" \
-                                -o "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
-
-                            antsApplyTransforms -d 3 \
-                            -i "${OUTPUT_regis}_biasfieldcorrected.nii.gz" \
-                            -r "${MNI_TEMPLATE}".nii.gz \
-                            -o "${OUTPUT_regis}__Warped.nii.gz" \
-                            -t "${OUTPUT_NAME}"__1Warp.nii.gz \
-                            -t "${OUTPUT_NAME}"__0GenericAffine.mat \
-                            -n NearestNeighbor
-
-                            rm "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+                        if [[ -f "${OUTPUT_regis}__Warped.nii.gz" ]]; then
+                            echo "  Transformed ${img} already available! Skipping ..."
                         else
-                            antsApplyTransforms -d 3 \
-                                -i $moving_IMAGE \
+                            if [[ "${moving_IMAGE}" != *segm* ]]; then
+                                N4BiasFieldCorrection -d 3 \
+                                    -i "${moving_IMAGE}" \
+                                    -o "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+
+                                antsApplyTransforms -d 3 \
+                                -i "${OUTPUT_regis}_biasfieldcorrected.nii.gz" \
                                 -r "${MNI_TEMPLATE}".nii.gz \
                                 -o "${OUTPUT_regis}__Warped.nii.gz" \
                                 -t "${OUTPUT_NAME}"__1Warp.nii.gz \
                                 -t "${OUTPUT_NAME}"__0GenericAffine.mat \
                                 -n NearestNeighbor
+
+                                rm "${OUTPUT_regis}_biasfieldcorrected.nii.gz"
+                            else
+                                antsApplyTransforms -d 3 \
+                                    -i $moving_IMAGE \
+                                    -r "${MNI_TEMPLATE}".nii.gz \
+                                    -o "${OUTPUT_regis}__Warped.nii.gz" \
+                                    -t "${OUTPUT_NAME}"__1Warp.nii.gz \
+                                    -t "${OUTPUT_NAME}"__0GenericAffine.mat \
+                                    -n NearestNeighbor
+                            fi
                         fi
                     else
                         echo "  The NIFTI image '''${img}''' does not exist"
