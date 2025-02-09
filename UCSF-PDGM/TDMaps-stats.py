@@ -32,7 +32,7 @@ from sklearn.model_selection import (
     cross_val_score, cross_validate, cross_val_predict, permutation_test_score
 )
 from sklearn.svm import SVC, LinearSVC
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, make_scorer, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, roc_auc_score, roc_curve
 
 
 parser = argparse.ArgumentParser()
@@ -45,7 +45,7 @@ args = parser.parse_args()
 stream_th = args.threshold
 fwer = True if args.correction=="fwer" else False
 daysXmonth = 365/12 
-percentiles2check = (20,80),(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
+percentiles2check = [(20,80)]#,(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
 n_resamples = 2500 # Bottstrapping and permutation of correlation values
 n_perms = 5000 # Permutation of Cox Prop Hazard models
 months = np.array([6,12,18,24,30,36,42,48])
@@ -1632,6 +1632,12 @@ for plow, phigh in percentiles2check:
     ax_acc = ax_acc.flatten()
     fig_bacc, ax_bacc = plt.subplots(nrows, ncols, figsize=figsize)
     ax_bacc = ax_bacc.flatten()
+    fig_ppv, ax_ppv = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_ppv = ax_ppv.flatten()
+    fig_npv, ax_npv = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_npv = ax_npv.flatten()
+    fig_fdr, ax_fdr = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_fdr = ax_fdr.flatten()
     for i in range(1,len(TDMaps.columns)):
         x = TDMaps[TDMaps.columns[i]]
         y = TDMaps["OS"]    
@@ -1642,7 +1648,9 @@ for plow, phigh in percentiles2check:
         life_clean = life[mask]
         # pvals
         perm_auc, perm_acc, perm_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        perm_ppv, perm_npv, perm_fdr = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
         p_auc, p_acc, p_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        p_ppv, p_npv, p_fdr = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
         TRUE_DEATHS[f"({plow}, {phigh})"][TDMaps.columns[i]], TDI_data[f"({plow}, {phigh})"][TDMaps.columns[i]] = dict(), dict()
         for j,m in enumerate(months):
             print(f"         {TDMaps.columns[i]}: {m} months")
@@ -1663,15 +1671,23 @@ for plow, phigh in percentiles2check:
             auc = roc_auc_score(died, tdi)
             acc = accuracy_score(died, death_preds)
             bacc = balanced_accuracy_score(died, death_preds)
+            tn, fp, fn, tp = confusion_matrix(died, death_preds).ravel()
+            ppv, npv, fdr = tp / (tp + fp), tn / (tn + fn), fp / (tp+fp)
             # Permute labels to compute the significance of the metrics
-            pop_auc, pop_acc, pop_bacc = [], [], []
+            pop_auc, pop_acc, pop_bacc, pop_ppv, pop_npv, pop_fdr = [], [], [], [], [], []
             for _ in range(n_perms):
                 perm_deaths = np.random.permutation(died)
                 pop_auc.append(roc_auc_score(perm_deaths, tdi))
                 pop_acc.append(accuracy_score(perm_deaths, death_preds))
                 pop_bacc.append(balanced_accuracy_score(perm_deaths, death_preds))
+                perm_tn, perm_fp, perm_fn, perm_tp = confusion_matrix(perm_deaths, death_preds).ravel()
+                pop_ppv.append(perm_tp / (perm_tp + perm_fp))
+                pop_npv.append(perm_tn / (perm_tn + perm_fn))
+                pop_fdr.append(perm_fp / (perm_tp+perm_fp))
             p_auc[j], p_acc[j], p_bacc[j] = np.mean(np.array(pop_auc) >= auc), np.mean(np.array(pop_acc) >= acc), np.mean(np.array(pop_bacc) >= bacc)
+            p_ppv[j], p_npv[j], p_fdr[j] = np.mean(np.array(pop_ppv) >= ppv), np.mean(np.array(pop_npv) >= npv), np.mean(np.array(pop_fdr) <= fdr)
             perm_auc[j], perm_acc[j], perm_bacc[j] = np.mean(np.array(pop_auc)), np.mean(np.array(pop_acc)), np.mean(np.array(pop_bacc))
+            perm_ppv[j], perm_npv[j], perm_fdr[j] = np.mean(np.array(pop_ppv)), np.mean(np.array(pop_npv)), np.mean(np.array(pop_fdr))
             # Plots
             ax_roc[i-1].plot(fpr, tpr, linestyle='-', linewidth=2.5, color=colors[j], label=f"Death at {m} months", alpha=.8) # Plot ROC
             ax_roc[i-1].plot(fpr[optimal_idx], tpr[optimal_idx], 'o', markersize=15, color=colors[j], markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
@@ -1679,14 +1695,23 @@ for plow, phigh in percentiles2check:
             ax_auc[i-1].bar(m, auc, color="cornflowerblue" if p_auc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot AUC           
             ax_acc[i-1].bar(m, acc, color="cornflowerblue" if p_acc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Accuracy          
             ax_bacc[i-1].bar(m, bacc, color="cornflowerblue" if p_bacc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Balanced accuracy 
+            ax_ppv[i-1].bar(m, ppv, color="cornflowerblue" if p_ppv[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Positive predictive value
+            ax_npv[i-1].bar(m, npv, color="cornflowerblue" if p_npv[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Negative predictive value
+            ax_fdr[i-1].bar(m, fdr, color="cornflowerblue" if p_fdr[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot False discovery rate
         if fwer: # Method: Holm's procedure
             _, p_auc_corr, _, _ = multipletests(p_auc, alpha=0.05, method='holm', is_sorted=False)
             _, p_acc_corr, _, _ = multipletests(p_acc, alpha=0.05, method='holm', is_sorted=False)
             _, p_bacc_corr, _, _ = multipletests(p_bacc, alpha=0.05, method='holm', is_sorted=False)
+            _, p_ppv_corr, _, _ = multipletests(p_ppv, alpha=0.05, method='holm', is_sorted=False)
+            _, p_npv_corr, _, _ = multipletests(p_npv, alpha=0.05, method='holm', is_sorted=False)
+            _, p_fdr_corr, _, _ = multipletests(p_fdr, alpha=0.05, method='holm', is_sorted=False)
         else: # Method: Benjamin-Hochberg
             _, p_auc_corr = fdrcorrection(p_auc, alpha=0.05, method='p', is_sorted=False)
             _, p_acc_corr = fdrcorrection(p_acc, alpha=0.05, method='p', is_sorted=False)
             _, p_bacc_corr = fdrcorrection(p_bacc, alpha=0.05, method='p', is_sorted=False)
+            _, p_ppv_corr = fdrcorrection(p_ppv, alpha=0.05, method='p', is_sorted=False)
+            _, p_npv_corr = fdrcorrection(p_npv, alpha=0.05, method='p', is_sorted=False)
+            _, p_fdr_corr = fdrcorrection(p_fdr, alpha=0.05, method='p', is_sorted=False)
         # Axes ROC
         ax_roc[i-1].plot([0,1],[0,1], linestyle='--', linewidth=.5, color="k")
         ax_roc[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
@@ -1731,7 +1756,40 @@ for plow, phigh in percentiles2check:
         ax_bacc[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
         ax_bacc[i-1].set_ylim([0.25, 1])
         ax_bacc[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
-        ax_bacc[i-1].set_ylabel("Balanced Accuracy")     
+        ax_bacc[i-1].set_ylabel("Balanced Accuracy")    
+        # Axes PPV
+        ax_ppv[i-1].plot(months, perm_ppv, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_ppv[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_ppv[i-1].spines[["top", "right"]].set_visible(False)
+        ax_ppv[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_ppv[i-1].set_xticks(months)
+        ax_ppv[i-1].set_xlabel("Death (months)")
+        ax_ppv[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_ppv[i-1].set_ylim([0.25, 1])
+        ax_ppv[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_ppv[i-1].set_ylabel("Positive Predictive Value")  
+        # Axes NPV
+        ax_npv[i-1].plot(months, perm_npv, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_npv[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_npv[i-1].spines[["top", "right"]].set_visible(False)
+        ax_npv[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_npv[i-1].set_xticks(months)
+        ax_npv[i-1].set_xlabel("Death (months)")
+        ax_npv[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_npv[i-1].set_ylim([0.25, 1])
+        ax_npv[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_npv[i-1].set_ylabel("Negative Predictive Value")        
+        # Axes NPV
+        ax_fdr[i-1].plot(months, perm_fdr, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_fdr[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_fdr[i-1].spines[["top", "right"]].set_visible(False)
+        ax_fdr[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_fdr[i-1].set_xticks(months)
+        ax_fdr[i-1].set_xlabel("Death (months)")
+        ax_fdr[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_fdr[i-1].set_ylim([0, 1])
+        ax_fdr[i-1].set_yticks([0.25, 0.5, 0.75, 1])
+        ax_npv[i-1].set_ylabel("False discovery rate")        
         # Significance and adjusted significance
         for j,m in enumerate(months):
             # AUC
@@ -1785,6 +1843,57 @@ for plow, phigh in percentiles2check:
                 ax_bacc[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
             else:
                 ax_bacc[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # positive predictive value significance labels
+            if p_ppv[j] <= 0.001:
+                ax_ppv[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_ppv[j] <= 0.01:
+                ax_ppv[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_ppv[j] <= 0.05:
+                ax_ppv[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_ppv[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_ppv_corr[j] <= 0.001:
+                ax_ppv[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_ppv_corr[j] <= 0.01:
+                ax_ppv[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_ppv_corr[j] <= 0.05:
+                ax_ppv[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_ppv[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # negative predictive value significance labels
+            if p_npv[j] <= 0.001:
+                ax_npv[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_npv[j] <= 0.01:
+                ax_npv[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_npv[j] <= 0.05:
+                ax_npv[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_npv[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_npv_corr[j] <= 0.001:
+                ax_npv[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_npv_corr[j] <= 0.01:
+                ax_npv[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_npv_corr[j] <= 0.05:
+                ax_npv[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_npv[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # false discovery rate significance labels
+            if p_fdr[j] <= 0.001:
+                ax_fdr[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_fdr[j] <= 0.01:
+                ax_fdr[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_fdr[j] <= 0.05:
+                ax_fdr[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_fdr[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_fdr_corr[j] <= 0.001:
+                ax_fdr[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_fdr_corr[j] <= 0.01:
+                ax_fdr[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_fdr_corr[j] <= 0.05:
+                ax_fdr[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_fdr[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
         if i==1:
             ax_roc[i-1].legend(frameon=False)
     fig_roc.tight_layout()
@@ -1798,7 +1907,16 @@ for plow, phigh in percentiles2check:
     plt.close(fig_acc)          
     fig_bacc.tight_layout()
     fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
-    plt.close(fig_bacc)      
+    plt.close(fig_bacc)    
+    fig_ppv.tight_layout()  
+    fig_ppv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-PPV.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_ppv)  
+    fig_npv.tight_layout() 
+    fig_npv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-NPV.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_npv)   
+    fig_fdr.tight_layout()
+    fig_fdr.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-FDR.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_fdr)   
     print("**************************")
 
 for i in range(1,len(TDMaps.columns)):
@@ -1807,7 +1925,7 @@ for i in range(1,len(TDMaps.columns)):
     for k, (plow, phigh) in enumerate(percentiles2check):    
         for j, m in enumerate(months):
             death = TRUE_DEATHS[f"({plow}, {phigh})"][feature_TDI][m]
-            scaled = TDI_data[f"({plow}, {phigh})"][feature_TDI][m].to_numpy()
+            scaled = TDI_data[f"({plow}, {phigh})"][feature_TDI][m]
             scaled = (scaled - scaled.min())/(scaled.max()-scaled.min())
             fpr, tpr, thresholds = roc_curve(death, scaled)
             optimal_idx = np.argmax(tpr - fpr)
