@@ -185,7 +185,7 @@ args = parser.parse_args()
 stream_th = args.threshold
 fwer = True if args.correction=="fwer" else False
 daysXmonth = 365/12 
-percentiles2check = [(20,80)]#,(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
+percentiles2check = (20,80),(25,75),(30,70),(35,65),(40,60),(45,55),(50,50)
 n_resamples = 2500 # Bottstrapping and permutation of correlation values
 n_perms = 5000 # Permutation of Cox Prop Hazard models
 months = np.array([6,12,18,24,30,36,42,48])
@@ -2059,7 +2059,7 @@ for plow, phigh in percentiles2check:
     plt.close(fig_fdr)   
     print("**************************")
 
-for i in range(1,len(TDMaps.columns)):
+for i in tqdm(range(1,len(TDMaps.columns)), desc="Plotting prediction histograms"):
     feature_TDI = TDMaps.columns[i]
     fig, ax = plt.subplots(len(percentiles2check), len(months), figsize=(6*len(months),5*len(percentiles2check)))
     for k, (plow, phigh) in enumerate(percentiles2check):    
@@ -2104,5 +2104,60 @@ for i in range(1,len(TDMaps.columns)):
             ax[k,j].legend(frameon=False)
 
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig)
+
+percentile = "(50, 50)"
+for i in range(1, len(TDMaps.columns),2):
+    fig, ax = plt.subplots(1, len(months), figsize=(6*len(months),5 ))
+    tissue1, tissue2 = TDMaps.columns[i], TDMaps.columns[i+1]
+    Zs, ps_DL, ps_DL_corrected = [], [], []
+    for j, m in enumerate(months):
+        death = TRUE_DEATHS[percentile][tissue1][m] # Since the percentile is 50, there is a unique ground truth (no data has been discarded for any of the two features -- not true for the other stratification thresholds)
+        # TDI
+        tdis_pred = TDI_data[percentile][tissue1][m].to_numpy()
+        fpr_tdi, tpr_tdi, thresholds = roc_curve(death, tdis_pred)
+        optimal_idx_tdi = np.argmax(tpr_tdi - fpr_tdi)
+        optimal_th_tdi = thresholds[optimal_idx_tdi]
+        # LDT
+        ltdis_pred = TDI_data[percentile][tissue2][m].to_numpy()
+        fpr_ltdi, tpr_ltdi, thresholds = roc_curve(death, ltdis_pred)
+        optimal_idx_ltdi = np.argmax(tpr_ltdi - fpr_ltdi)
+        optimal_th_ltdi = thresholds[optimal_idx_ltdi]
+        # De Long test
+        DeLong = DeLong_Test(death) 
+        Z, pDL = DeLong.delong_roc_test(ltdis_pred, tdis_pred)
+        Zs.append(Z), ps_DL.append(pDL)
+        # Plot
+        ax[j].plot(fpr_ltdi, tpr_ltdi, linestyle='-', linewidth=2.5, label='L-TDI', alpha=.8) # Plot ROC
+        ax[j].plot(fpr_ltdi[optimal_idx_ltdi], tpr_ltdi[optimal_idx_ltdi], 'o', markersize=15, color="gray", markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
+        ax[j].plot([fpr_ltdi[optimal_idx_ltdi],fpr_ltdi[optimal_idx_ltdi]],[fpr_ltdi[optimal_idx_ltdi],tpr_ltdi[optimal_idx_ltdi]], linestyle='--', linewidth=1.5, color="gray") 
+        ax[j].plot(fpr_tdi, tpr_tdi, linestyle='-', linewidth=2.5, label='TDI', alpha=.8) # Plot ROC
+        ax[j].plot(fpr_tdi[optimal_idx_tdi], tpr_tdi[optimal_idx_tdi], 'o', markersize=15, color="gray", markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
+        ax[j].plot([fpr_tdi[optimal_idx_tdi],fpr_tdi[optimal_idx_tdi]],[fpr_tdi[optimal_idx_tdi],tpr_tdi[optimal_idx_tdi]], linestyle='--', linewidth=1.5, color="gray")           
+        ax[j].plot([0,1],[0,1], linestyle='--', linewidth=.5, color="k")
+        
+        ax[j].legend(frameon=False)
+        ax[j].set_title(f"Death at {m} months", fontweight="bold", fontsize=15)
+        ax[j].spines[["top", "right"]].set_visible(False)
+        ax[j].set_xlim([-.05,1.05])
+        ax[j].set_xticks([0,0.5,1])
+        ax[j].set_xlabel("False positive rate (FPR)", fontsize=15)
+        ax[j].spines['bottom'].set_bounds(0,1)
+        ax[j].set_ylim([0,1])
+        ax[j].set_yticks([0,0.5,1])
+        ax[j].set_ylabel("True positive rate (TPR)", fontsize=15)
+        ax[j].spines['left'].set_bounds(0,1)
+
+        if fwer: # Method: Holm's procedure
+            _, ps_DL_corrected, _, _ = multipletests(ps_DL, alpha=0.05, method='holm', is_sorted=False)
+        else: # Method: Benjamin-Hochberg
+            _, ps_DL_corrected = fdrcorrection(ps_DL, alpha=0.05, method='p', is_sorted=False)
+
+    for j, m in enumerate(months):
+        ax[j].text(0.65, 0.15, r"$Z =$"+f"{round(Zs[j],4)} \np = {round(ps_DL[j],4)} \np"+r'$_{corrected}$'+f" = {round(ps_DL_corrected[j],4)}", transform=ax[j].transAxes, 
+            fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if ps_DL[j]<=0.05 else "black")      
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{TDMaps.columns[i].split(" ")[0]}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
