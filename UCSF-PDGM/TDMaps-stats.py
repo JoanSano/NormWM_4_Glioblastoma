@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import argparse
 from tqdm import tqdm
+import json
 
 import matplotlib
 matplotlib.use('Agg')
@@ -14,6 +15,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 import seaborn as sns
 
+import scipy
 from scipy.stats import mannwhitneyu, linregress, pearsonr, PermutationMethod, BootstrapMethod
 
 from statsmodels.stats.multitest import multipletests, fdrcorrection
@@ -31,8 +33,147 @@ from sklearn.model_selection import (
     cross_val_score, cross_validate, cross_val_predict, permutation_test_score
 )
 from sklearn.svm import SVC, LinearSVC
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, make_scorer, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, roc_auc_score, roc_curve
 
+class DeLong_Test():    
+    # Adopted from https://github.com/yandexdataschool/roc_comparison 
+    # Original ref: https://ieeexplore.ieee.org/document/6851192
+
+    def __init__(self, ground_truths) -> None:
+        """
+        Computes the DeLong p-value and/or variance of a pair or predictions
+            that are related to the same structure (or ground truth)
+        Args:
+        ground_truths: A flat array containing the positive and negative samples.
+        """
+        self.ground_truth = ground_truths
+
+    # AUC comparison adapted from
+    # https://github.com/Netflix/vmaf/
+    def __compute_midrank(self, x):
+        """Computes midranks.
+        Args:
+        x - a 1D numpy array
+        Returns:
+        array of midranks
+        """
+        J = np.argsort(x)
+        Z = x[J]
+        N = len(x)
+        T = np.zeros(N, dtype=np.float64)
+        i = 0
+        while i < N:
+            j = i
+            while j < N and Z[j] == Z[i]:
+                j += 1
+            T[i:j] = 0.5*(i + j - 1)
+            i = j
+        T2 = np.empty(N, dtype=np.float64)
+        # Note(kazeevn) +1 is due to Python using 0-based indexing
+        # instead of 1-based in the AUC formula in the paper
+        T2[J] = T + 1
+        return T2
+
+    def __compute_ground_truth_statistics(self):
+        assert np.array_equal(np.unique(self.ground_truth), [0, 1])
+        order = (-self.ground_truth).argsort()
+        label_1_count = int(self.ground_truth.sum())
+        return order, label_1_count
+
+    def fastDeLong(self, predictions_sorted_transposed, label_1_count):
+        """
+        The fast version of DeLong's method for computing the covariance of
+        unadjusted AUC.
+        Args:
+        predictions_sorted_transposed: a 2D numpy.array[n_classifiers, n_examples]
+            sorted such as the examples with label "1" are first
+        Returns:
+        (AUC value, DeLong covariance)
+        Reference:
+        @article{sun2014fast,
+        title={Fast Implementation of DeLong's Algorithm for
+                Comparing the Areas Under Correlated Receiver Operating Characteristic Curves},
+        author={Xu Sun and Weichao Xu},
+        journal={IEEE Signal Processing Letters},
+        volume={21},
+        number={11},
+        pages={1389--1393},
+        year={2014},
+        publisher={IEEE}
+        }
+        """
+        # Short variables are named as they are in the paper
+        m = label_1_count
+        n = predictions_sorted_transposed.shape[1] - m
+        positive_examples = predictions_sorted_transposed[:, :m]
+        negative_examples = predictions_sorted_transposed[:, m:]
+        k = predictions_sorted_transposed.shape[0]
+
+        tx = np.empty([k, m], dtype=np.float64)
+        ty = np.empty([k, n], dtype=np.float64)
+        tz = np.empty([k, m + n], dtype=np.float64)
+        for r in range(k):
+            tx[r, :] = self.__compute_midrank(positive_examples[r, :])
+            ty[r, :] = self.__compute_midrank(negative_examples[r, :])
+            tz[r, :] = self.__compute_midrank(predictions_sorted_transposed[r, :])
+        aucs = tz[:, :m].sum(axis=1) / m / n - float(m + 1.0) / 2.0 / n
+        v01 = (tz[:, :m] - tx[:, :]) / n
+        v10 = 1.0 - (tz[:, m:] - ty[:, :]) / m
+        sx = np.cov(v01)
+        sy = np.cov(v10)
+        delongcov = sx / m + sy / n
+        return aucs, delongcov
+    
+    def calc_pvalue(self, aucs, sigma, alternative="two-sided"):
+        """Computes the p-value.
+        Args:
+        aucs: 1D array of AUCs
+        sigma: AUC DeLong covariances
+        Returns:
+        z_score, p_value
+        """
+        """ l = np.array([[1, -1]])
+        z = np.abs(np.diff(aucs)) / np.sqrt(np.dot(np.dot(l, sigma), l.T))
+        print(z)
+        return np.log10(2) + scipy.stats.norm.logsf(z, loc=0, scale=1) / np.log(10) """     
+        if alternative not in ["two-sided", "greater", "lower"]:
+            raise ValueError("Provide a valid hypothesis from two-sided, greater or lower")
+        l = np.array([1, -1])
+        z = (aucs[0]-aucs[1]) / np.sqrt(np.dot(np.dot(l, sigma), l.T))   
+        if alternative=="two-sided":
+            return z, scipy.stats.norm.sf(abs(z))*2
+        elif alternative=="greater":
+            return z, scipy.stats.norm.sf(z)
+        else:
+            return z, scipy.stats.norm.cdf(z)
+
+    def delong_roc_variance(self, predictions):
+        """
+        Computes ROC AUC variance for a single set of predictions
+        Args:
+        ground_truth: np.array of 0 and 1
+        predictions: np.array of floats of the probability of being class 1
+        """
+        order, label_1_count = self.__compute_ground_truth_statistics()
+        predictions_sorted_transposed = predictions[np.newaxis, order]
+        aucs, delongcov = self.fastDeLong(predictions_sorted_transposed, label_1_count)
+        assert len(aucs) == 1, "There is a bug in the code, please forward this to the developers"
+        return aucs[0], delongcov
+
+    def delong_roc_test(self, predictions_one, predictions_two, alternative="two-sided"):
+        """
+        Computes log(p-value) for hypothesis that two ROC AUCs are different
+        Args:
+        ground_truth: np.array of 0 and 1
+        predictions_one: predictions of the first model,
+            np.array of floats of the probability of being class 1
+        predictions_two: predictions of the second model,
+            np.array of floats of the probability of being class 1
+        """
+        order, label_1_count = self.__compute_ground_truth_statistics()
+        predictions_sorted_transposed = np.vstack((predictions_one, predictions_two))[:, order]
+        aucs, delongcov = self.fastDeLong(predictions_sorted_transposed, label_1_count)
+        return self.calc_pvalue(aucs, delongcov, alternative=alternative)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the directory where the TDI and survival data are stored")
@@ -81,7 +222,7 @@ TDMaps_all = TDMaps_all.loc[demographics_TD["OS"].fillna('unknown')!='unknown']
 TDMaps = TDMaps_all#.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 life = TDMaps_all["1-dead 0-alive"].values
 TDMaps = TDMaps.drop(columns="1-dead 0-alive")
-
+"""
 ####################################################################################################################################################################
 ## General numbers
 ####################################################################################################################################################################
@@ -1405,7 +1546,7 @@ for min_samples_leaf in [30]:
     fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
     plt.close()
     print("*****************************")
-
+"""
 """ # Using an SVClassifier to predict survival
 splits = 8 # Determine whether 8 is a good number or we should experiment more
 colors = ["black", "forestgreen", "purple", "cornflowerblue"]
@@ -1536,7 +1677,7 @@ for model in ["linear","rbf"]:#
         fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.{args.format}"), dpi=300, format=args.format)
         plt.close(fig)
         plt.close(fig_bis) """
-
+"""
 # Using the TDI classifiers to compute the time-dependent AUC(t)
 for plow, phigh in [(25,75),(50,50)]:
     print(f"TDI classifier: Percentiles ({plow},{phigh})")
@@ -1614,11 +1755,14 @@ for plow, phigh in [(25,75),(50,50)]:
     fig.tight_layout()
     fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
+"""
 
 # Using the TDI classifiers to compute the AUC at different survival times
 months = [12,24,36,48]
 colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#9467BD"]
-for plow, phigh in percentiles2check:
+TRUE_DEATHS, TDI_data = dict(), dict() # Record ground truths and indices to perform delong test between pairs of ROCs
+for plow, phigh in percentiles2check:    
+    TRUE_DEATHS[f"({plow}, {phigh})"], TDI_data[f"({plow}, {phigh})"] = dict(), dict()
     print(f"TDI classifier: Percentiles ({plow},{phigh})")
     fig_roc, ax_roc = plt.subplots(nrows, ncols, figsize=figsize)
     ax_roc = ax_roc.flatten()
@@ -1628,6 +1772,12 @@ for plow, phigh in percentiles2check:
     ax_acc = ax_acc.flatten()
     fig_bacc, ax_bacc = plt.subplots(nrows, ncols, figsize=figsize)
     ax_bacc = ax_bacc.flatten()
+    fig_ppv, ax_ppv = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_ppv = ax_ppv.flatten()
+    fig_npv, ax_npv = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_npv = ax_npv.flatten()
+    fig_fdr, ax_fdr = plt.subplots(nrows, ncols, figsize=figsize)
+    ax_fdr = ax_fdr.flatten()
     for i in range(1,len(TDMaps.columns)):
         x = TDMaps[TDMaps.columns[i]]
         y = TDMaps["OS"]    
@@ -1638,7 +1788,10 @@ for plow, phigh in percentiles2check:
         life_clean = life[mask]
         # pvals
         perm_auc, perm_acc, perm_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        perm_ppv, perm_npv, perm_fdr = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
         p_auc, p_acc, p_bacc = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        p_ppv, p_npv, p_fdr = np.zeros((len(months),)), np.zeros((len(months),)), np.zeros((len(months),))
+        TRUE_DEATHS[f"({plow}, {phigh})"][TDMaps.columns[i]], TDI_data[f"({plow}, {phigh})"][TDMaps.columns[i]] = dict(), dict()
         for j,m in enumerate(months):
             print(f"         {TDMaps.columns[i]}: {m} months")
             month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
@@ -1649,6 +1802,8 @@ for plow, phigh in percentiles2check:
             y_month_mask = y_month_mask[~tdi_mask]
             died = np.where(y_month_mask>=m*daysXmonth, 0, 1)
             fpr, tpr, thresholds = roc_curve(died, tdi)
+            TRUE_DEATHS[f"({plow}, {phigh})"][TDMaps.columns[i]][m] = died
+            TDI_data[f"({plow}, {phigh})"][TDMaps.columns[i]][m] = tdi.to_numpy()
             # Metrics
             optimal_idx = np.argmax(tpr - fpr)
             optimal_th = thresholds[optimal_idx]
@@ -1656,15 +1811,23 @@ for plow, phigh in percentiles2check:
             auc = roc_auc_score(died, tdi)
             acc = accuracy_score(died, death_preds)
             bacc = balanced_accuracy_score(died, death_preds)
+            tn, fp, fn, tp = confusion_matrix(died, death_preds).ravel()
+            ppv, npv, fdr = tp / (tp + fp), tn / (tn + fn), fp / (tp+fp)
             # Permute labels to compute the significance of the metrics
-            pop_auc, pop_acc, pop_bacc = [], [], []
+            pop_auc, pop_acc, pop_bacc, pop_ppv, pop_npv, pop_fdr = [], [], [], [], [], []
             for _ in range(n_perms):
                 perm_deaths = np.random.permutation(died)
                 pop_auc.append(roc_auc_score(perm_deaths, tdi))
                 pop_acc.append(accuracy_score(perm_deaths, death_preds))
                 pop_bacc.append(balanced_accuracy_score(perm_deaths, death_preds))
+                perm_tn, perm_fp, perm_fn, perm_tp = confusion_matrix(perm_deaths, death_preds).ravel()
+                pop_ppv.append(perm_tp / (perm_tp + perm_fp))
+                pop_npv.append(perm_tn / (perm_tn + perm_fn))
+                pop_fdr.append(perm_fp / (perm_tp+perm_fp))
             p_auc[j], p_acc[j], p_bacc[j] = np.mean(np.array(pop_auc) >= auc), np.mean(np.array(pop_acc) >= acc), np.mean(np.array(pop_bacc) >= bacc)
+            p_ppv[j], p_npv[j], p_fdr[j] = np.mean(np.array(pop_ppv) >= ppv), np.mean(np.array(pop_npv) >= npv), np.mean(np.array(pop_fdr) <= fdr)
             perm_auc[j], perm_acc[j], perm_bacc[j] = np.mean(np.array(pop_auc)), np.mean(np.array(pop_acc)), np.mean(np.array(pop_bacc))
+            perm_ppv[j], perm_npv[j], perm_fdr[j] = np.mean(np.array(pop_ppv)), np.mean(np.array(pop_npv)), np.mean(np.array(pop_fdr))
             # Plots
             ax_roc[i-1].plot(fpr, tpr, linestyle='-', linewidth=2.5, color=colors[j], label=f"Death at {m} months", alpha=.8) # Plot ROC
             ax_roc[i-1].plot(fpr[optimal_idx], tpr[optimal_idx], 'o', markersize=15, color=colors[j], markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
@@ -1672,14 +1835,23 @@ for plow, phigh in percentiles2check:
             ax_auc[i-1].bar(m, auc, color="cornflowerblue" if p_auc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot AUC           
             ax_acc[i-1].bar(m, acc, color="cornflowerblue" if p_acc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Accuracy          
             ax_bacc[i-1].bar(m, bacc, color="cornflowerblue" if p_bacc[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Balanced accuracy 
+            ax_ppv[i-1].bar(m, ppv, color="cornflowerblue" if p_ppv[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Positive predictive value
+            ax_npv[i-1].bar(m, npv, color="cornflowerblue" if p_npv[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot Negative predictive value
+            ax_fdr[i-1].bar(m, fdr, color="cornflowerblue" if p_fdr[j]<=0.05 else "lightgray", edgecolor="black", width=5) # Plot False discovery rate
         if fwer: # Method: Holm's procedure
             _, p_auc_corr, _, _ = multipletests(p_auc, alpha=0.05, method='holm', is_sorted=False)
             _, p_acc_corr, _, _ = multipletests(p_acc, alpha=0.05, method='holm', is_sorted=False)
             _, p_bacc_corr, _, _ = multipletests(p_bacc, alpha=0.05, method='holm', is_sorted=False)
+            _, p_ppv_corr, _, _ = multipletests(p_ppv, alpha=0.05, method='holm', is_sorted=False)
+            _, p_npv_corr, _, _ = multipletests(p_npv, alpha=0.05, method='holm', is_sorted=False)
+            _, p_fdr_corr, _, _ = multipletests(p_fdr, alpha=0.05, method='holm', is_sorted=False)
         else: # Method: Benjamin-Hochberg
             _, p_auc_corr = fdrcorrection(p_auc, alpha=0.05, method='p', is_sorted=False)
             _, p_acc_corr = fdrcorrection(p_acc, alpha=0.05, method='p', is_sorted=False)
             _, p_bacc_corr = fdrcorrection(p_bacc, alpha=0.05, method='p', is_sorted=False)
+            _, p_ppv_corr = fdrcorrection(p_ppv, alpha=0.05, method='p', is_sorted=False)
+            _, p_npv_corr = fdrcorrection(p_npv, alpha=0.05, method='p', is_sorted=False)
+            _, p_fdr_corr = fdrcorrection(p_fdr, alpha=0.05, method='p', is_sorted=False)
         # Axes ROC
         ax_roc[i-1].plot([0,1],[0,1], linestyle='--', linewidth=.5, color="k")
         ax_roc[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
@@ -1724,7 +1896,40 @@ for plow, phigh in percentiles2check:
         ax_bacc[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
         ax_bacc[i-1].set_ylim([0.25, 1])
         ax_bacc[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
-        ax_bacc[i-1].set_ylabel("Balanced Accuracy")     
+        ax_bacc[i-1].set_ylabel("Balanced Accuracy")    
+        # Axes PPV
+        ax_ppv[i-1].plot(months, perm_ppv, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_ppv[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_ppv[i-1].spines[["top", "right"]].set_visible(False)
+        ax_ppv[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_ppv[i-1].set_xticks(months)
+        ax_ppv[i-1].set_xlabel("Death (months)")
+        ax_ppv[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_ppv[i-1].set_ylim([0.25, 1])
+        ax_ppv[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_ppv[i-1].set_ylabel("Positive Predictive Value")  
+        # Axes NPV
+        ax_npv[i-1].plot(months, perm_npv, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_npv[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_npv[i-1].spines[["top", "right"]].set_visible(False)
+        ax_npv[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_npv[i-1].set_xticks(months)
+        ax_npv[i-1].set_xlabel("Death (months)")
+        ax_npv[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_npv[i-1].set_ylim([0.25, 1])
+        ax_npv[i-1].set_yticks([0.25, 0.5, 0.6, 0.7, 0.8, 1])
+        ax_npv[i-1].set_ylabel("Negative Predictive Value")        
+        # Axes NPV
+        ax_fdr[i-1].plot(months, perm_fdr, 'o', linestyle='--', linewidth=.5, color="k")
+        ax_fdr[i-1].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+        ax_fdr[i-1].spines[["top", "right"]].set_visible(False)
+        ax_fdr[i-1].set_xlim([months[0]-5, months[-1]+5])
+        ax_fdr[i-1].set_xticks(months)
+        ax_fdr[i-1].set_xlabel("Death (months)")
+        ax_fdr[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
+        ax_fdr[i-1].set_ylim([0, 1])
+        ax_fdr[i-1].set_yticks([0.25, 0.5, 0.75, 1])
+        ax_fdr[i-1].set_ylabel("False discovery rate")        
         # Significance and adjusted significance
         for j,m in enumerate(months):
             # AUC
@@ -1778,6 +1983,57 @@ for plow, phigh in percentiles2check:
                 ax_bacc[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
             else:
                 ax_bacc[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # positive predictive value significance labels
+            if p_ppv[j] <= 0.001:
+                ax_ppv[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_ppv[j] <= 0.01:
+                ax_ppv[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_ppv[j] <= 0.05:
+                ax_ppv[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_ppv[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_ppv_corr[j] <= 0.001:
+                ax_ppv[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_ppv_corr[j] <= 0.01:
+                ax_ppv[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_ppv_corr[j] <= 0.05:
+                ax_ppv[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_ppv[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # negative predictive value significance labels
+            if p_npv[j] <= 0.001:
+                ax_npv[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_npv[j] <= 0.01:
+                ax_npv[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_npv[j] <= 0.05:
+                ax_npv[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_npv[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_npv_corr[j] <= 0.001:
+                ax_npv[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_npv_corr[j] <= 0.01:
+                ax_npv[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_npv_corr[j] <= 0.05:
+                ax_npv[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_npv[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
+            # false discovery rate significance labels
+            if p_fdr[j] <= 0.001:
+                ax_fdr[i-1].text(m-1.5, 0.9, '***', color='black', fontsize=10)
+            elif p_fdr[j] <= 0.01:
+                ax_fdr[i-1].text(m-1, 0.9, '**', color='black', fontsize=10)
+            elif p_fdr[j] <= 0.05:
+                ax_fdr[i-1].text(m-0.5, 0.9, '*', color='black', fontsize=10)
+            else:
+                ax_fdr[i-1].text(m-1.5, 0.9, 'n.s.', color='black', fontsize=10)               
+            if p_fdr_corr[j] <= 0.001:
+                ax_fdr[i-1].text(m-1.5, 0.95, '***', color='blue', fontsize=10)
+            elif p_fdr_corr[j] <= 0.01:
+                ax_fdr[i-1].text(m-1, 0.95, '**', color='blue', fontsize=10)
+            elif p_fdr_corr[j] <= 0.05:
+                ax_fdr[i-1].text(m-0.5, 0.95, '*', color='blue', fontsize=10)
+            else:
+                ax_fdr[i-1].text(m-1.5, 0.95, 'n.s.', color='blue', fontsize=10)
         if i==1:
             ax_roc[i-1].legend(frameon=False)
     fig_roc.tight_layout()
@@ -1791,5 +2047,117 @@ for plow, phigh in percentiles2check:
     plt.close(fig_acc)          
     fig_bacc.tight_layout()
     fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
-    plt.close(fig_bacc)      
+    plt.close(fig_bacc)    
+    fig_ppv.tight_layout()  
+    fig_ppv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-PPV.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_ppv)  
+    fig_npv.tight_layout() 
+    fig_npv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-NPV.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_npv)   
+    fig_fdr.tight_layout()
+    fig_fdr.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-FDR.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig_fdr)   
     print("**************************")
+
+for i in tqdm(range(1,len(TDMaps.columns)), desc="Plotting prediction histograms"):
+    feature_TDI = TDMaps.columns[i]
+    fig, ax = plt.subplots(len(percentiles2check), len(months), figsize=(6*len(months),5*len(percentiles2check)))
+    for k, (plow, phigh) in enumerate(percentiles2check):    
+        for j, m in enumerate(months):
+            death = TRUE_DEATHS[f"({plow}, {phigh})"][feature_TDI][m]
+            scaled = TDI_data[f"({plow}, {phigh})"][feature_TDI][m]
+            scaled = (scaled - scaled.min())/(scaled.max()-scaled.min())
+            fpr, tpr, thresholds = roc_curve(death, scaled)
+            optimal_idx = np.argmax(tpr - fpr)
+            optimal_th = thresholds[optimal_idx]
+            death_preds = np.where(scaled>=optimal_th, 1, 0)
+
+            scaled_survived = scaled[death==0]
+            low_scaled_tn = scaled_survived[scaled_survived<=optimal_th]
+            low_scaled_fp = scaled_survived[scaled_survived>optimal_th]
+            scaled_died = scaled[death==1]
+            low_scaled_fn = scaled_died[scaled_died<=optimal_th]
+            low_scaled_tp = scaled_died[scaled_died>optimal_th]
+
+            ax[k,j].hist(low_scaled_tn, histtype="bar", density=False, cumulative=False, bins=20, color="forestgreen", label="Survived")
+            ax[k,j].hist(low_scaled_fp, histtype="step", density=False, cumulative=False, bins=20, color="forestgreen", linewidth=2)
+            ax[k,j].hist(low_scaled_tp, histtype="bar", density=False, cumulative=False, bins=20, color="darkorange", weights=-np.ones_like(low_scaled_tp), label="Died")
+            ax[k,j].hist(low_scaled_fn, histtype="step", density=False, cumulative=False, bins=20, color="darkorange", weights=-np.ones_like(low_scaled_fn), linewidth=2)
+
+            ax[k,j].hlines(0, -.05, 1051, linestyle='-', linewidth=1, color='black')
+            ax[k,j].vlines(optimal_th, -12, 12, linestyle='--', linewidth=2, color="black")
+            ax[k,j].set_xlim([-0.1,1.1])
+            
+            ax[k,j].set_xticks([])
+            ax[k,j].set_yticks([])
+            if "lesion" in feature_TDI:
+                ax[k,j].set_xlabel("L-TDI (a.u.)", fontsize=15)
+            else:
+                ax[k,j].set_xlabel("TDI (a.u.)", fontsize=15)
+            if j==0:
+                ax[k,j].spines[["top", "right", "bottom"]].set_visible(False)
+                ax[k,j].set_ylabel(f"Stratification threshold {plow}/{phigh}"+r'$^{th}$'+" percentiles", fontsize=15)
+            else:
+                ax[k,j].spines[["top", "right", "bottom","left"]].set_visible(False)
+            if k==0:
+                ax[k,j].set_title(f"Prediction at {m} months", fontweight='bold', fontsize=12)
+            ax[k,j].legend(frameon=False)
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig)
+
+percentile = "(50, 50)"
+for i in range(1, len(TDMaps.columns),2):
+    fig, ax = plt.subplots(1, len(months), figsize=(6*len(months),5 ))
+    tissue1, tissue2 = TDMaps.columns[i], TDMaps.columns[i+1]
+    Zs, ps_DL, ps_DL_corrected = [], [], []
+    for j, m in enumerate(months):
+        death = TRUE_DEATHS[percentile][tissue1][m] # Since the percentile is 50, there is a unique ground truth (no data has been discarded for any of the two features -- not true for the other stratification thresholds)
+        # TDI
+        tdis_pred = TDI_data[percentile][tissue1][m]
+        fpr_tdi, tpr_tdi, thresholds = roc_curve(death, tdis_pred)
+        optimal_idx_tdi = np.argmax(tpr_tdi - fpr_tdi)
+        optimal_th_tdi = thresholds[optimal_idx_tdi]
+        # LDT
+        ltdis_pred = TDI_data[percentile][tissue2][m]
+        fpr_ltdi, tpr_ltdi, thresholds = roc_curve(death, ltdis_pred)
+        optimal_idx_ltdi = np.argmax(tpr_ltdi - fpr_ltdi)
+        optimal_th_ltdi = thresholds[optimal_idx_ltdi]
+        # De Long test
+        DeLong = DeLong_Test(death)         
+        Z, pDL = DeLong.delong_roc_test(ltdis_pred, tdis_pred)
+        Zs.append(Z), ps_DL.append(pDL)
+        # Plot
+        ax[j].plot(fpr_ltdi, tpr_ltdi, linestyle='-', linewidth=2.5, label='L-TDI', alpha=.8) # Plot ROC
+        ax[j].plot(fpr_ltdi[optimal_idx_ltdi], tpr_ltdi[optimal_idx_ltdi], 'o', markersize=15, color="gray", markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
+        ax[j].plot([fpr_ltdi[optimal_idx_ltdi],fpr_ltdi[optimal_idx_ltdi]],[fpr_ltdi[optimal_idx_ltdi],tpr_ltdi[optimal_idx_ltdi]], linestyle='--', linewidth=1.5, color="gray") 
+        ax[j].plot(fpr_tdi, tpr_tdi, linestyle='-', linewidth=2.5, label='TDI', alpha=.8) # Plot ROC
+        ax[j].plot(fpr_tdi[optimal_idx_tdi], tpr_tdi[optimal_idx_tdi], 'o', markersize=15, color="gray", markerfacecolor=None, markeredgecolor='black', markeredgewidth=2.5, alpha=0.5)
+        ax[j].plot([fpr_tdi[optimal_idx_tdi],fpr_tdi[optimal_idx_tdi]],[fpr_tdi[optimal_idx_tdi],tpr_tdi[optimal_idx_tdi]], linestyle='--', linewidth=1.5, color="gray")           
+        ax[j].plot([0,1],[0,1], linestyle='--', linewidth=.5, color="k")
+        
+        ax[j].legend(frameon=False)
+        ax[j].set_title(f"Death at {m} months", fontweight="bold", fontsize=15)
+        ax[j].spines[["top", "right"]].set_visible(False)
+        ax[j].set_xlim([-.05,1.05])
+        ax[j].set_xticks([0,0.5,1])
+        ax[j].set_xlabel("False positive rate (FPR)", fontsize=15)
+        ax[j].spines['bottom'].set_bounds(0,1)
+        ax[j].set_ylim([0,1])
+        ax[j].set_yticks([0,0.5,1])
+        ax[j].set_ylabel("True positive rate (TPR)", fontsize=15)
+        ax[j].spines['left'].set_bounds(0,1)
+
+        if fwer: # Method: Holm's procedure
+            _, ps_DL_corrected, _, _ = multipletests(ps_DL, alpha=0.05, method='holm', is_sorted=False)
+        else: # Method: Benjamin-Hochberg
+            _, ps_DL_corrected = fdrcorrection(ps_DL, alpha=0.05, method='p', is_sorted=False)
+
+    for j, m in enumerate(months):
+        ax[j].text(0.65, 0.15, r"$Z =$"+f"{round(Zs[j],4)} \np = {round(ps_DL[j],4)} \np"+r'$_{corrected}$'+f" = {round(ps_DL_corrected[j],4)}", transform=ax[j].transAxes, 
+            fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if ps_DL[j]<=0.05 else "black")      
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{TDMaps.columns[i].split(" ")[0]}.{args.format}"), dpi=300, format=args.format)
+    plt.close(fig)
