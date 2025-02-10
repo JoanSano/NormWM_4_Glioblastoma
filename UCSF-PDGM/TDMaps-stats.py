@@ -1929,7 +1929,7 @@ for plow, phigh in percentiles2check:
         ax_fdr[i-1].spines['bottom'].set_bounds(months[0]-2.5, months[-1]+2.5)
         ax_fdr[i-1].set_ylim([0, 1])
         ax_fdr[i-1].set_yticks([0.25, 0.5, 0.75, 1])
-        ax_npv[i-1].set_ylabel("False discovery rate")        
+        ax_fdr[i-1].set_ylabel("False discovery rate")        
         # Significance and adjusted significance
         for j,m in enumerate(months):
             # AUC
@@ -2125,7 +2125,7 @@ for i in range(1, len(TDMaps.columns),2):
         optimal_idx_ltdi = np.argmax(tpr_ltdi - fpr_ltdi)
         optimal_th_ltdi = thresholds[optimal_idx_ltdi]
         # De Long test
-        DeLong = DeLong_Test(death) 
+        DeLong = DeLong_Test(death)         
         Z, pDL = DeLong.delong_roc_test(ltdis_pred, tdis_pred)
         Zs.append(Z), ps_DL.append(pDL)
         # Plot
