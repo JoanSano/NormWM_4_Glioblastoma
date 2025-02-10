@@ -2115,12 +2115,12 @@ for i in range(1, len(TDMaps.columns),2):
     for j, m in enumerate(months):
         death = TRUE_DEATHS[percentile][tissue1][m] # Since the percentile is 50, there is a unique ground truth (no data has been discarded for any of the two features -- not true for the other stratification thresholds)
         # TDI
-        tdis_pred = TDI_data[percentile][tissue1][m].to_numpy()
+        tdis_pred = TDI_data[percentile][tissue1][m]
         fpr_tdi, tpr_tdi, thresholds = roc_curve(death, tdis_pred)
         optimal_idx_tdi = np.argmax(tpr_tdi - fpr_tdi)
         optimal_th_tdi = thresholds[optimal_idx_tdi]
         # LDT
-        ltdis_pred = TDI_data[percentile][tissue2][m].to_numpy()
+        ltdis_pred = TDI_data[percentile][tissue2][m]
         fpr_ltdi, tpr_ltdi, thresholds = roc_curve(death, ltdis_pred)
         optimal_idx_ltdi = np.argmax(tpr_ltdi - fpr_ltdi)
         optimal_th_ltdi = thresholds[optimal_idx_ltdi]
