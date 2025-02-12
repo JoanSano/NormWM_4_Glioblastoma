@@ -181,7 +181,7 @@ parser.add_argument("--threshold", type=int, default=0, help="Streamline density
 parser.add_argument("--correction", type=str, choices=["fwer","fdr"], default="fdr", help="Multiple hypotheses correction method")
 parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
 args = parser.parse_args()
-
+#args.path = "D:\JoanFR_Sano\Glioblastoma_UPENN-GBM_v2-20221024" # For debuggin purposes -- delete or comment as appropiate
 stream_th = args.threshold
 fwer = True if args.correction=="fwer" else False
 daysXmonth = 365/12 
@@ -193,9 +193,12 @@ months = np.array([6,12,18,24,30,36,42,48])
 nrows, ncols = 2, 5
 figsize = (25,12)
 figs_folder = f"StreamlineTDThreshold-{stream_th}_GBM-Wildtype"
-os.makedirs(os.path.join(args.path, "Figures/TDMaps_Grade-IV",figs_folder), exist_ok=True)
+os.makedirs(os.path.join(args.path, "Figures/TDMaps_IDH1-WT",figs_folder), exist_ok=True)
 
-demographics_TD = pd.read_csv(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/demographics-TDMaps_streamTH-{stream_th}.csv"))
+demographics_TD = pd.read_csv(os.path.join(args.path, f"TDMaps_IDH1-WT/demographics-TDMaps_streamTH-{stream_th}.csv"))
+demographics_TD.rename(columns={"Survival_from_surgery_days_UPDATED": "OS"}, inplace=True)
+demographics_TD.rename(columns={"Survival_Status": "1-dead 0-alive"}, inplace=True)
+
 TDMaps_all = demographics_TD[
     [
         "OS",
@@ -213,7 +216,6 @@ TDMaps_all = demographics_TD[
     ]
 ]
 
-TDMaps_all = TDMaps_all.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 TDMaps_all = TDMaps_all.loc[demographics_TD["OS"].fillna('unknown')!='unknown']
 #TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT status"].isin(["positive", "negative"])]
 #TDMaps_all = TDMaps_all.loc[demographics_TD["MGMT index"].fillna('unknown')!='unknown']
@@ -245,13 +247,13 @@ stats_string += f"No. of patients with a registered event (1-dead/0-alive): {a}\
 stats_string += f"No. of dead patients (without right censoring): {b} ({round(100*b/a,2)}%)\n"
 stats_string += f"No. of patients with right censoring: {c} ({round(100*c/a,2)}%)\n"
 
-with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt"), "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/stats.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 ####################################################################################################################################################################
 ## Correlation coefficient between TD Maps and OS
 ####################################################################################################################################################################
-fig, ((ax1, ax2, ax3),(ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(27, 18))
+""" fig, ((ax1, ax2, ax3),(ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(27, 18))
 cross_TD_0 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
 cross_TD_p_0 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
 cross_TD_1 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
@@ -304,7 +306,7 @@ ax3.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=1)
 ax6.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=0)", fontweight='bold', fontsize=12)
 ax3.tick_params(axis='both', length=0) 
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/correlation-TDMaps.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/correlation-TDMaps.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -339,7 +341,7 @@ for status in [0,1]:
         ax[i-1].set_ylabel("Overall survival (months)", fontweight="bold", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_scatter_status-{status}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/OS-TDMaps_scatter_status-{status}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -410,7 +412,7 @@ for i in range(1,len(TDMaps.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-TDMaps_step-monthly.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
@@ -478,7 +480,7 @@ for i in range(1,len(TDMaps.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-TDMaps_step-monthly_status-1.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-TDMaps_step-monthly_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -487,122 +489,118 @@ plt.close()
 KMcurves_ps = np.zeros((len(TDMaps.columns)-1, len(percentiles2check)))
 KMcurves_ps_1 = np.zeros((len(TDMaps.columns)-1, len(percentiles2check)))
 Median_ps = np.zeros((len(TDMaps.columns)-1, len(percentiles2check)))
+print("INFO:    Death earlier than X months only computed for status=1 patients. The status=0 subgroup contains only 14 entries!")
 for p_iter, (plow, phigh) in enumerate(percentiles2check):
     print(f"Percentiles ({plow},{phigh})")
 
     ## Death earlier than X months 
     perc = plow
-    for status in [0,1]:
+    for status in [1]:
         fig, ax = plt.subplots(nrows*2, ncols, figsize=figsize)
         ax = ax.flatten()
         k_ax = 0 
         for i in range(1,len(TDMaps.columns)):
-            if (i==3 or i==4) and status==0:
-                print(f"Status = {status} --> {TDMaps.columns[i]} no TDI groups available")
-                ax[k_ax].set_axis_off()
-                ax[k_ax+5].set_axis_off()
-            else:
-                x = TDMaps[TDMaps.columns[i]]
-                y = TDMaps["OS"]    
-                # Remove rows where x or y is NaN
-                mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==status
-                x_clean = x[mask]
-                y_clean = y[mask]
-                life_clean = life[mask]
-                ax[k_ax].text(months[0]-2, -0.375, "No. of deaths", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
-                rs = np.zeros((len(months),5)) # rho, pval, low CI, high CI, FDR/FWER pval
-                pv_us = np.zeros((len(months),2))
-                for j,m in enumerate(months):
-                    mask_months = y_clean<=(m*daysXmonth)
-                    x_masked = x_clean[mask_months]
-                    y_masked = y_clean[mask_months]
-                    # Correlation
-                    result_rho = pearsonr(
-                        x_masked, y_masked, 
-                        method=PermutationMethod(n_resamples=n_resamples), 
-                        alternative='two-sided'
-                    )
-                    rs[j,0], rs[j,1] = result_rho[0], result_rho[1]
-                    rs[j,2:4] = result_rho.confidence_interval(0.95, method=BootstrapMethod(n_resamples=n_resamples))
-                    if rs[j,1]<=0.001:
-                        ax[k_ax].text(m-1.5, .425, '***', color='black',fontsize=10, transform=ax[k_ax].transData)
-                    elif rs[j,1]<=0.01:
-                        ax[k_ax].text(m-1, .425, '**', color='black',fontsize=10, transform=ax[k_ax].transData)
-                    elif rs[j,1]<=0.05:
-                        ax[k_ax].text(m-.5, .425, '*', color='black',fontsize=10, transform=ax[k_ax].transData)
-                    else:            
-                        ax[k_ax].text(m-1.5, .425, 'n.s.', color='black',fontsize=10, transform=ax[k_ax].transData)
-                    ax[k_ax].text(m-2, -0.525, f"{len(y_masked)}", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black") # Numbers
-                    # OS 
-                    y_masked_small = y_masked[x_masked<=np.percentile(x_masked, perc)]
-                    y_masked_big = y_masked[x_masked>=np.percentile(x_masked, 100-perc)]
-                    _, pv = mannwhitneyu(y_masked_small, y_masked_big, alternative='two-sided')
-                    pv_us[j,0] = pv
-                    ax[k_ax+5].plot(np.full(len(y_masked_small),m-1),y_masked_small.values,'o', markersize=2, color='royalblue', label=f"Low TDI (P<={perc})" if j==0 else None)
-                    ax[k_ax+5].plot(np.full(len(y_masked_big),m+1),y_masked_big.values,'o', markersize=2, color='salmon', label=f"High TDI (P>={100-perc})" if j==0 else None)
-                    if pv<=0.001:
-                        ax[k_ax+5].text(m-1.5, 1300, '***', color='black',fontsize=10)
-                    elif pv<=0.01:
-                        ax[k_ax+5].text(m-1, 1300, '**', color='black',fontsize=10)
-                    elif pv<=0.05:
-                        ax[k_ax+5].text(m-.5, 1300, '*', color='black',fontsize=10)
-                    else:            
-                        ax[k_ax+5].text(m-1.5, 1300, 'n.s.', color='black',fontsize=10)
-                    ax[k_ax+5].plot([m-1,m+1],[np.median(y_masked_small), np.median(y_masked_big)], '-s', linewidth=3, markersize=5, color='black')
-                    ax[k_ax+5].plot([m-1,m-1],[np.median(y_masked_small), np.percentile(y_masked_small, 75)], '-+', linewidth=2, markersize=5, color='black')
-                    ax[k_ax+5].plot([m+1,m+1],[np.median(y_masked_big), np.percentile(y_masked_big, 75)], '-+', linewidth=2, color='black')
-                    ax[k_ax+5].text(m-2, 2000, f"{len(y_masked_small)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="royalblue") # Numbers
-                    ax[k_ax+5].text(m-2, 1800, f"{len(y_masked_big)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="salmon") # Numbers
-                if fwer: # Method: Holm's procedure
-                    _, rs[:,4], _, _ = multipletests(rs[:,1], alpha=0.05, method='holm', is_sorted=False)
-                    _, pv_us[:,1], _, _ = multipletests(pv_us[:,0], alpha=0.05, method='holm', is_sorted=False)
-                else: # Method: Benjamin-Hochberg
-                    _, rs[:,4] = fdrcorrection(rs[:,1], alpha=0.05, method='p', is_sorted=False)
-                    _, pv_us[:,1] = fdrcorrection(pv_us[:,0], alpha=0.05, method='p', is_sorted=False)
-                for j,m in enumerate(months):
-                    if rs[j,4]<=0.001:
-                        ax[k_ax].text(m-1.5, .5, '***', color='blue',fontsize=10, transform=ax[k_ax].transData)
-                    elif rs[j,4]<=0.01:
-                        ax[k_ax].text(m-1, .5, '**', color='blue',fontsize=10, transform=ax[k_ax].transData)
-                    elif rs[j,4]<=0.05:
-                        ax[k_ax].text(m-.5, .5, '*', color='blue',fontsize=10, transform=ax[k_ax].transData)
-                    else:            
-                        ax[k_ax].text(m-1.5, .5, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax].transData)
-                    if pv_us[j,1]<=0.001:
-                        ax[k_ax+5].text(m-1.5, 1400, '***', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
-                    elif pv_us[j,1]<=0.01:
-                        ax[k_ax+5].text(m-1, 1400, '**', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
-                    elif pv_us[j,1]<=0.05:
-                        ax[k_ax+5].text(m-.5, 1400, '*', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
-                    else:            
-                        ax[k_ax+5].text(m-1.5, 1400, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
-                # Set the labels and clean up the plot
-                ax[k_ax].plot(months,rs[:,0],'-o', linewidth=3, markersize=15, color='black')
-                ax[k_ax].plot(months[rs[:,4]<=0.05],rs[rs[:,4]<=0.05,0],'o', markersize=5, color='red')
-                ax[k_ax].fill_between(months, y1=rs[:,2], y2=rs[:,3], color='black', alpha=.15, edgecolor=None)
-                ax[k_ax].hlines(0, months[0]-5, months[-1]+5, color='gray', alpha=.75, linewidth=.75, linestyle='--')
-                ax[k_ax].set_xlim([months[0]-5, months[-1]+5])
-                ax[k_ax].set_xticks(months)
-                ax[k_ax].set_xticklabels([])
-                ax[k_ax].tick_params(axis='x', which='both', bottom=False) 
-                ax[k_ax].set_ylim([-.5,.6])
-                ax[k_ax].set_yticks([-.4,-.2,0,.2,.4,.6])
-                ax[k_ax].set_yticklabels([-0.4,-0.2,0,0.2,0.4,0.6])
-                ax[k_ax].spines['left'].set_bounds(-.4,.6)
-                ax[k_ax].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
-                ax[k_ax].set_ylabel("Pearson "+r'$\rho$'+f" (status={status})", fontsize=12)
-                ax[k_ax].spines[["top", "right", "bottom"]].set_visible(False)
-                ax[k_ax+5].set_ylabel("Overall survival (months)", fontsize=12)
-                ax[k_ax+5].set_xlabel("Death cutoff ("+r'$\leq$'+"months)", fontsize=12)
-                ax[k_ax+5].set_xlim([months[0]-5, months[-1]+5])
-                ax[k_ax+5].set_xticks(months)
-                ax[k_ax+5].set_xticklabels(months)
-                ax[k_ax+5].set_ylim([-10,1600])
-                ax[k_ax+5].set_yticks([0,180,360,540,720,900,1080,1260,1440])
-                ax[k_ax+5].set_yticklabels(np.array([0,180,360,540,720,900,1080,1260,1440])//daysXmonth)
-                ax[k_ax+5].spines['bottom'].set_bounds(months[0], months[-1])
-                ax[k_ax+5].spines['left'].set_bounds(0,1440)
-                ax[k_ax+5].spines[["top", "right"]].set_visible(False)
+            x = TDMaps[TDMaps.columns[i]]
+            y = TDMaps["OS"]    
+            # Remove rows where x or y is NaN
+            mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==status
+            x_clean = x[mask]
+            y_clean = y[mask]
+            life_clean = life[mask]
+            ax[k_ax].text(months[0]-2, -0.375, "No. of deaths", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black", fontweight='bold') 
+            rs = np.zeros((len(months),5)) # rho, pval, low CI, high CI, FDR/FWER pval
+            pv_us = np.zeros((len(months),2))
+            for j,m in enumerate(months):
+                mask_months = y_clean<=(m*daysXmonth)
+                x_masked = x_clean[mask_months]
+                y_masked = y_clean[mask_months]
+                # Correlation
+                result_rho = pearsonr(
+                    x_masked, y_masked, 
+                    method=PermutationMethod(n_resamples=n_resamples), 
+                    alternative='two-sided'
+                )
+                rs[j,0], rs[j,1] = result_rho[0], result_rho[1]
+                rs[j,2:4] = result_rho.confidence_interval(0.95, method=BootstrapMethod(n_resamples=n_resamples))
+                if rs[j,1]<=0.001:
+                    ax[k_ax].text(m-1.5, .425, '***', color='black',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,1]<=0.01:
+                    ax[k_ax].text(m-1, .425, '**', color='black',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,1]<=0.05:
+                    ax[k_ax].text(m-.5, .425, '*', color='black',fontsize=10, transform=ax[k_ax].transData)
+                else:            
+                    ax[k_ax].text(m-1.5, .425, 'n.s.', color='black',fontsize=10, transform=ax[k_ax].transData)
+                ax[k_ax].text(m-2, -0.525, f"{len(y_masked)}", transform=ax[k_ax].transData, fontsize=12, verticalalignment='top', color="black") # Numbers
+                # OS 
+                y_masked_small = y_masked[x_masked<=np.percentile(x_masked, perc)]
+                y_masked_big = y_masked[x_masked>=np.percentile(x_masked, 100-perc)]
+                _, pv = mannwhitneyu(y_masked_small, y_masked_big, alternative='two-sided')
+                pv_us[j,0] = pv
+                ax[k_ax+5].plot(np.full(len(y_masked_small),m-1),y_masked_small.values,'o', markersize=2, color='royalblue', label=f"Low TDI (P<={perc})" if j==0 else None)
+                ax[k_ax+5].plot(np.full(len(y_masked_big),m+1),y_masked_big.values,'o', markersize=2, color='salmon', label=f"High TDI (P>={100-perc})" if j==0 else None)
+                if pv<=0.001:
+                    ax[k_ax+5].text(m-1.5, 1300, '***', color='black',fontsize=10)
+                elif pv<=0.01:
+                    ax[k_ax+5].text(m-1, 1300, '**', color='black',fontsize=10)
+                elif pv<=0.05:
+                    ax[k_ax+5].text(m-.5, 1300, '*', color='black',fontsize=10)
+                else:            
+                    ax[k_ax+5].text(m-1.5, 1300, 'n.s.', color='black',fontsize=10)
+                ax[k_ax+5].plot([m-1,m+1],[np.median(y_masked_small), np.median(y_masked_big)], '-s', linewidth=3, markersize=5, color='black')
+                ax[k_ax+5].plot([m-1,m-1],[np.median(y_masked_small), np.percentile(y_masked_small, 75)], '-+', linewidth=2, markersize=5, color='black')
+                ax[k_ax+5].plot([m+1,m+1],[np.median(y_masked_big), np.percentile(y_masked_big, 75)], '-+', linewidth=2, color='black')
+                ax[k_ax+5].text(m-2, 2000, f"{len(y_masked_small)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="royalblue") # Numbers
+                ax[k_ax+5].text(m-2, 1800, f"{len(y_masked_big)}", transform=ax[k_ax+5].transData, fontsize=12, verticalalignment='top', color="salmon") # Numbers
+            if fwer: # Method: Holm's procedure
+                _, rs[:,4], _, _ = multipletests(rs[:,1], alpha=0.05, method='holm', is_sorted=False)
+                _, pv_us[:,1], _, _ = multipletests(pv_us[:,0], alpha=0.05, method='holm', is_sorted=False)
+            else: # Method: Benjamin-Hochberg
+                _, rs[:,4] = fdrcorrection(rs[:,1], alpha=0.05, method='p', is_sorted=False)
+                _, pv_us[:,1] = fdrcorrection(pv_us[:,0], alpha=0.05, method='p', is_sorted=False)
+            for j,m in enumerate(months):
+                if rs[j,4]<=0.001:
+                    ax[k_ax].text(m-1.5, .5, '***', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,4]<=0.01:
+                    ax[k_ax].text(m-1, .5, '**', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                elif rs[j,4]<=0.05:
+                    ax[k_ax].text(m-.5, .5, '*', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                else:            
+                    ax[k_ax].text(m-1.5, .5, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax].transData)
+                if pv_us[j,1]<=0.001:
+                    ax[k_ax+5].text(m-1.5, 1400, '***', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                elif pv_us[j,1]<=0.01:
+                    ax[k_ax+5].text(m-1, 1400, '**', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                elif pv_us[j,1]<=0.05:
+                    ax[k_ax+5].text(m-.5, 1400, '*', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+                else:            
+                    ax[k_ax+5].text(m-1.5, 1400, 'n.s.', color='blue',fontsize=10, transform=ax[k_ax+5].transData)
+            # Set the labels and clean up the plot
+            ax[k_ax].plot(months,rs[:,0],'-o', linewidth=3, markersize=15, color='black')
+            ax[k_ax].plot(months[rs[:,4]<=0.05],rs[rs[:,4]<=0.05,0],'o', markersize=5, color='red')
+            ax[k_ax].fill_between(months, y1=rs[:,2], y2=rs[:,3], color='black', alpha=.15, edgecolor=None)
+            ax[k_ax].hlines(0, months[0]-5, months[-1]+5, color='gray', alpha=.75, linewidth=.75, linestyle='--')
+            ax[k_ax].set_xlim([months[0]-5, months[-1]+5])
+            ax[k_ax].set_xticks(months)
+            ax[k_ax].set_xticklabels([])
+            ax[k_ax].tick_params(axis='x', which='both', bottom=False) 
+            ax[k_ax].set_ylim([-.5,.6])
+            ax[k_ax].set_yticks([-.4,-.2,0,.2,.4,.6])
+            ax[k_ax].set_yticklabels([-0.4,-0.2,0,0.2,0.4,0.6])
+            ax[k_ax].spines['left'].set_bounds(-.4,.6)
+            ax[k_ax].set_title(TDMaps.columns[i], fontweight="bold", fontsize=12)
+            ax[k_ax].set_ylabel("Pearson "+r'$\rho$'+f" (status={status})", fontsize=12)
+            ax[k_ax].spines[["top", "right", "bottom"]].set_visible(False)
+            ax[k_ax+5].set_ylabel("Overall survival (months)", fontsize=12)
+            ax[k_ax+5].set_xlabel("Death cutoff ("+r'$\leq$'+"months)", fontsize=12)
+            ax[k_ax+5].set_xlim([months[0]-5, months[-1]+5])
+            ax[k_ax+5].set_xticks(months)
+            ax[k_ax+5].set_xticklabels(months)
+            ax[k_ax+5].set_ylim([-10,1600])
+            ax[k_ax+5].set_yticks([0,180,360,540,720,900,1080,1260,1440])
+            ax[k_ax+5].set_yticklabels(np.array([0,180,360,540,720,900,1080,1260,1440])//daysXmonth)
+            ax[k_ax+5].spines['bottom'].set_bounds(months[0], months[-1])
+            ax[k_ax+5].spines['left'].set_bounds(0,1440)
+            ax[k_ax+5].spines[["top", "right"]].set_visible(False)
             if (i-1)==0:
                 ax[k_ax+5].legend(frameon=False, ncols=1, loc='center left')
             if (i-1)==4:
@@ -611,9 +609,9 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
                 k_ax += 1
         fig.tight_layout()
         if status==1:
-            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_death-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/OS-TDMaps_death-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         else:
-            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/OS-TDMaps_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         plt.close()
 
     ## Median survival analyses
@@ -650,7 +648,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         ax[i-1].set_ylabel("Overall survival (months)", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-TDMaps_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/OS-TDMaps_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with dead subjects
@@ -720,7 +718,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with censoring
@@ -791,7 +789,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -799,12 +797,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
 ####################################################################################################################################################################
 fig, ax = plt.subplots(len(TDMaps.columns)-1, 3, figsize=(19,12))
 for i in range(len(TDMaps.columns)-1):
-    ax[i,0].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
-    ax[i,0].plot(np.log(KMcurves_ps[i]), '-o', color='black', linewidth=2, label="Uncorrected")
-    ax[i,1].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
-    ax[i,1].plot(np.log(KMcurves_ps_1[i]), '-o', color='black', linewidth=2)
-    ax[i,2].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
-    ax[i,2].plot(np.log(Median_ps[i]), '-o', color='black', linewidth=2)
+
     if fwer: # Method: Holm's procedure
         _, pcorr_0, _, _ = multipletests(KMcurves_ps[i], alpha=0.05, method='holm', is_sorted=False)
         _, pcorr_1, _, _ = multipletests(KMcurves_ps_1[i], alpha=0.05, method='holm', is_sorted=False)
@@ -813,13 +806,21 @@ for i in range(len(TDMaps.columns)-1):
         _, pcorr_0 = fdrcorrection(KMcurves_ps[i], alpha=0.05, method='p', is_sorted=False)
         _, pcorr_1 = fdrcorrection(KMcurves_ps_1[i], alpha=0.05, method='p', is_sorted=False)
         _, pcorr_2 = fdrcorrection(Median_ps[i], alpha=0.05, method='p', is_sorted=False)
-    ax[i,0].plot(np.log(pcorr_0), '-o', color='blue', linewidth=1.25, label="FWER corrected" if fwer else "FDR corrected")
-    ax[i,1].plot(np.log(pcorr_1), '-o', color='blue', linewidth=1.25)
-    ax[i,2].plot(np.log(pcorr_2), '-o', color='blue', linewidth=1.25)
+    
+    ax[i,0].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
+    ax[i,1].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
+    ax[i,2].plot(np.ones((len(percentiles2check),))*np.log(0.05), '--', color='red', linewidth=0.5)
 
-    ax[i,0].set_xlim([-0.1,len(percentiles2check)-0.9])
-    ax[i,1].set_xlim([-0.1,len(percentiles2check)-0.9])
-    ax[i,2].set_xlim([-0.1,len(percentiles2check)-0.9])
+    # Uncorrected
+    ax[i,0].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(KMcurves_ps[i])], '-o', color='black', linewidth=2, label="Uncorrected")
+    ax[i,1].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(KMcurves_ps_1[i])], '-o', color='black', linewidth=2)
+    ax[i,2].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(Median_ps[i])], '-o', color='black', linewidth=2)
+
+    # Corrected
+    ax[i,0].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(pcorr_0)], '-o', color='blue', linewidth=1.25, label="FWER corrected" if fwer else "FDR corrected")
+    ax[i,1].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(pcorr_1)], '-o', color='blue', linewidth=1.25)
+    ax[i,2].plot([pplot if pplot>=np.log(0.00005) else np.log(0.000075) for pplot in np.log(pcorr_2)], '-o', color='blue', linewidth=1.25)
+        
     ax[i,0].set_ylim(np.log([0.00005,2]))
     ax[i,1].set_ylim(np.log([0.00005,2]))
     ax[i,2].set_ylim(np.log([0.00005,2]))
@@ -830,6 +831,10 @@ for i in range(len(TDMaps.columns)-1):
     ax[i,1].set_yticklabels([])
     ax[i,2].set_yticks(np.round(np.log([0.001,0.01,0.1,1]),2))
     ax[i,2].set_yticklabels([])
+
+    ax[i,0].set_xlim([-0.1,len(percentiles2check)-0.9])
+    ax[i,1].set_xlim([-0.1,len(percentiles2check)-0.9])
+    ax[i,2].set_xlim([-0.1,len(percentiles2check)-0.9])
     ax[i,0].set_ylabel(TDMaps.columns[i+1][:-5], fontweight='bold', fontsize=5)
 
     if i==0:
@@ -860,10 +865,10 @@ for i in range(len(TDMaps.columns)-1):
         ax[i,1].set_xlabel("Percentiles", fontweight='bold')
         ax[i,2].set_xlabel("Percentiles", fontweight='bold')
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/p-values_percentiles.{args.format}"), dpi=300, format=args.format)
 plt.close()
 print("FINISHED SURVIVAL AND KAPLAN-MEIER ANALYSES")
-print("   ************************   ")
+print("   ************************   ") """
 
 ####################################################################################################################################################################
 ## FEATURE SELECTION USING INDIVIDUAL COX PROPORTIONAL HAZARD MODELS
@@ -947,7 +952,7 @@ ax.set_xticklabels([TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-
 ax.spines['bottom'].set_bounds(0,len(TDMaps.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-selection.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 # Plot the prediction
@@ -999,7 +1004,7 @@ for i in range(0,len(TDMaps.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-prediction.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 stats_string += "------------------------------\n"
@@ -1083,7 +1088,7 @@ ax.set_xticklabels([TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-
 ax.spines['bottom'].set_bounds(0,len(TDMaps.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-selection_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 # Plot the prediction
 start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
@@ -1134,10 +1139,10 @@ for i in range(0,len(TDMaps.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
-with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresTDI_CoxPHazard.txt"), "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/stats-featuresTDI_CoxPHazard.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 print("FINISHED FEATURE IMPORTANCE USING COX PH MODELS AND C-index")
@@ -1256,7 +1261,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_feature-importance.{args.format}"), dpi=300, format=args.format)
 
 # Discard right censored data and possible nan values
 #feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-2] 
@@ -1348,7 +1353,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_feature-importance_status-1.{args.format}"), dpi=300, format=args.format)
 
 print("FINISHED FEATURE IMPORTANCE USING GRID SEARCH AND COX PH MODELS")
 print("   ************************   ")
@@ -1455,7 +1460,7 @@ for i_ax, splits in enumerate(N_splits):
         ax[i_ax,1].set_xticklabels([])
         ax[i_ax,1].tick_params(axis='x', length=0) 
 fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.{args.format}"), dpi=300, format=args.format)
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-prediction_model-Cox.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 # Using Random survival forest
@@ -1543,7 +1548,7 @@ for min_samples_leaf in [30]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
     plt.close()
     print("*****************************")
 
@@ -1673,8 +1678,8 @@ for model in ["linear","rbf"]:#
                 ax_bis[i-1].legend(frameon=False, ncols=1, loc="lower right")
         fig.tight_layout()
         fig_bis.tight_layout()
-        fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
-        fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.{args.format}"), dpi=300, format=args.format)
+        fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
+        fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.{args.format}"), dpi=300, format=args.format)
         plt.close(fig)
         plt.close(fig_bis)  """
 
@@ -1753,7 +1758,7 @@ for plow, phigh in [(25,75),(50,50)]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
 
 
@@ -2037,25 +2042,25 @@ for plow, phigh in percentiles2check:
         if i==1:
             ax_roc[i-1].legend(frameon=False)
     fig_roc.tight_layout()
-    fig_roc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.{args.format}"), dpi=300, format=args.format)
+    fig_roc.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_roc)          
     fig_auc.tight_layout()
-    fig_auc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.{args.format}"), dpi=300, format=args.format)
+    fig_auc.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_auc)          
     fig_acc.tight_layout()
-    fig_acc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.{args.format}"), dpi=300, format=args.format)
+    fig_acc.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_acc)          
     fig_bacc.tight_layout()
-    fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
+    fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_bacc)    
     fig_ppv.tight_layout()  
-    fig_ppv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-PPV.{args.format}"), dpi=300, format=args.format)
+    fig_ppv.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-PPV.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_ppv)  
     fig_npv.tight_layout() 
-    fig_npv.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-NPV.{args.format}"), dpi=300, format=args.format)
+    fig_npv.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-NPV.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_npv)   
     fig_fdr.tight_layout()
-    fig_fdr.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-FDR.{args.format}"), dpi=300, format=args.format)
+    fig_fdr.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-FDR.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_fdr)   
     print("**************************")
 
@@ -2104,7 +2109,7 @@ for i in tqdm(range(1,len(TDMaps.columns)), desc="Plotting prediction histograms
             ax[k,j].legend(frameon=False)
 
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_metric-histograms_{feature_TDI}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
 
 percentile = "(50, 50)"
@@ -2159,5 +2164,5 @@ for i in range(1, len(TDMaps.columns),2):
             fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if ps_DL[j]<=0.05 else "black")      
 
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{TDMaps.columns[i].split(" ")[0]}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{TDMaps.columns[i].split(" ")[0]}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
