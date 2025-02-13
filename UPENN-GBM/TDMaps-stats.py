@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import argparse
 from tqdm import tqdm
-import json
+from joblib import Parallel, delayed
 
 import matplotlib
 matplotlib.use('Agg')
@@ -253,7 +253,7 @@ with open(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/stats.t
 ####################################################################################################################################################################
 ## Correlation coefficient between TD Maps and OS
 ####################################################################################################################################################################
-""" fig, ((ax1, ax2, ax3),(ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(27, 18))
+fig, ((ax1, ax2, ax3),(ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(27, 18))
 cross_TD_0 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
 cross_TD_p_0 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
 cross_TD_1 = np.zeros((len(TDMaps.columns), len(TDMaps.columns))) * np.nan
@@ -868,65 +868,78 @@ fig.tight_layout()
 fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/p-values_percentiles.{args.format}"), dpi=300, format=args.format)
 plt.close()
 print("FINISHED SURVIVAL AND KAPLAN-MEIER ANALYSES")
-print("   ************************   ") """
+print("   ************************   ")
 
 ####################################################################################################################################################################
 ## FEATURE SELECTION USING INDIVIDUAL COX PROPORTIONAL HAZARD MODELS
 ####################################################################################################################################################################
 # With right censoring
-fig, ax = plt.subplots(1,1, figsize=(6,4))
-level_CI = 95
-HarrellCindex = np.zeros((len(TDMaps.columns)-1,))
-HarrellCindex_p = np.zeros((len(TDMaps.columns)-1,))
-colors = []
-Cmodel_pred = []
-stats_string = "Right censoring\n===========================\n"
-for i in range(1,len(TDMaps.columns)):
+def process_feature(i, TDMaps, life):
+    #os.sched_setaffinity(0, {i-1})
     x = TDMaps[TDMaps.columns[i]]
-    y = TDMaps["OS"]    
-    # Remove rows where x, y, or life is NaN
+    y = TDMaps["OS"]
+
+    # Remove NaN values
     mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life)
     x_clean = x[mask]
     y_clean = y[mask]
     life_clean = life[mask]
-    # Censoring (based on the status variable)
-    OS_STATS = []
-    OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
-    OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
-    # Model
+
+    # Prepare survival data
+    OS_STATS = np.array([(st, os) for st, os in zip(life_clean, y_clean.values)], dtype=[('event', 'bool'), ('time', '<f4')])
+
+    # Fit Cox model
     Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
-    Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
-    HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
+    Cmodel.fit(x_clean.values.reshape(-1, 1), OS_STATS)
+    c_index = Cmodel.score(x_clean.values.reshape(-1, 1), OS_STATS)
+
+    # Sequential permutation testing (not parallelized)
     pop = []
-    for _ in tqdm(range(n_perms), desc=f"Cox feature selection for the marker: {TDMaps.columns[i]}"):
+    for perm_i in range(n_perms):
         perm_OS_STATS = np.random.permutation(OS_STATS)
         p_Cmodel = CoxPHSurvivalAnalysis()
-        p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
-        pop.append(p_Cmodel.score(x_clean.values.reshape(-1, 1),perm_OS_STATS))
-    HarrellCindex_p[i-1] = np.mean(np.array(pop) >= HarrellCindex[i-1])
-    if HarrellCindex_p[i-1]<=0.001:
-        colors.append("cornflowerblue")
-    elif HarrellCindex_p[i-1]<=0.01:
-        colors.append("cornflowerblue")
-    elif HarrellCindex_p[i-1]<=0.05:
-        colors.append("cornflowerblue")
-    else:            
-        colors.append("lightgray")
-    # Summary
-    stats_string += f"Feature: {TDMaps.columns[i]} with a c-index of {HarrellCindex[i-1]} (p={HarrellCindex_p[i-1]})\n"
-    # Prediction
+        p_Cmodel.fit(x_clean.values.reshape(-1, 1), perm_OS_STATS)
+        pop.append(p_Cmodel.score(x_clean.values.reshape(-1, 1), perm_OS_STATS))
+
+        if perm_i in {int(0.25 * n_perms), int(0.5 * n_perms), int(0.75 * n_perms), n_perms - 1}:
+            progress_percent = int((perm_i + 1) / n_perms * 100)
+            space = i*"  "
+            print(f"INFO: {space}Feature {TDMaps.columns[i]} is at {progress_percent}% of the permutation testing")
+
+    # Compute p-value
+    p_value = np.mean(np.array(pop) >= c_index)
+
+    # Assign color based on p-value
+    color = "cornflowerblue" if p_value <= 0.05 else "lightgray"
+
+    # Generate predictions
     x_new, low_p = {}, 0
     for pc in percentiles2check:
-        x_new[f"P({low_p},{pc[0]})"] = x_clean[(x_clean>np.percentile(x_clean, low_p))&(x_clean<=np.percentile(x_clean, pc[0]))].mean()
-        x_new[f"P({pc[1]},{100-low_p})"] = x_clean[(x_clean>np.percentile(x_clean, pc[1]))&(x_clean<=np.percentile(x_clean, 100-low_p))].mean()
+        x_new[f"P({low_p},{pc[0]})"] = x_clean[(x_clean > np.percentile(x_clean, low_p)) & (x_clean <= np.percentile(x_clean, pc[0]))].mean()
+        x_new[f"P({pc[1]},{100 - low_p})"] = x_clean[(x_clean > np.percentile(x_clean, pc[1])) & (x_clean <= np.percentile(x_clean, 100 - low_p))].mean()
         low_p = pc[0]
-    x_new = pd.DataFrame.from_dict(
-            x_new,
-            orient="index",
-    )
-    Cmodel_pred.append(
-        Cmodel.predict_survival_function(x_new)
-    )
+
+    x_new = pd.DataFrame.from_dict(x_new, orient="index")
+    cmodel_prediction = Cmodel.predict_survival_function(x_new)
+
+    return i - 1, c_index, p_value, color, cmodel_prediction, f"Feature: {TDMaps.columns[i]} with a c-index of {c_index} (p={p_value})\n"
+
+level_CI = 95
+n_jobs = -1  # Use all available CPU cores
+results = Parallel(n_jobs=n_jobs)(delayed(process_feature)(i, TDMaps, life) for i in range(1, len(TDMaps.columns)))
+HarrellCindex = np.zeros((len(TDMaps.columns) - 1,))
+HarrellCindex_p = np.zeros((len(TDMaps.columns) - 1,))
+colors = []
+Cmodel_pred = []
+stats_string = "Right censoring\n===========================\n"
+for i, c_index, p_value, color, cmodel_prediction, stat in results:
+    HarrellCindex[i] = c_index
+    HarrellCindex_p[i] = p_value
+    colors.append(color)
+    Cmodel_pred.append(cmodel_prediction)
+    stats_string += stat
+
+fig, ax = plt.subplots(1,1, figsize=(6,4))
 ax.bar(
     range(0,len(TDMaps.columns)-1), 
     np.sort(HarrellCindex)[::-1],
@@ -1007,141 +1020,6 @@ fig.tight_layout()
 fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-prediction.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
-stats_string += "------------------------------\n"
-
-# Without right censoring
-fig, ax = plt.subplots(1,1, figsize=(6,4))
-level_CI = 95
-HarrellCindex = np.zeros((len(TDMaps.columns)-1,))
-HarrellCindex_p = np.zeros((len(TDMaps.columns)-1,))
-colors = []
-Cmodel_pred = []
-stats_string += "No censoring\n===========================\n"
-for i in range(1,len(TDMaps.columns)):
-    x = TDMaps[TDMaps.columns[i]]
-    y = TDMaps["OS"]    
-    # Remove rows where x, y, or life is NaN
-    mask = ~np.isnan(x) & ~np.isnan(y) & ~np.isnan(life) & life==1
-    x_clean = x[mask]
-    y_clean = y[mask]
-    life_clean = life[mask]
-    # Censoring (based on the status variable)
-    OS_STATS = []
-    OS_STATS.extend([(st, os) for st,os in zip(life_clean,y_clean.values)])
-    OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
-    # Model
-    Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
-    Cmodel.fit(x_clean.values.reshape(-1, 1),OS_STATS)
-    HarrellCindex[i-1] = Cmodel.score(x_clean.values.reshape(-1, 1),OS_STATS)
-    pop = []
-    for _ in tqdm(range(n_perms), desc=f"Cox feature selection for the marker (status = 1): {TDMaps.columns[i]}"):
-        perm_OS_STATS = np.random.permutation(OS_STATS)
-        p_Cmodel = CoxPHSurvivalAnalysis()
-        p_Cmodel.fit(x_clean.values.reshape(-1, 1),perm_OS_STATS)
-        pop.append(p_Cmodel.score(x_clean.values.reshape(-1, 1),perm_OS_STATS))
-    HarrellCindex_p[i-1] = np.mean(np.array(pop) >= HarrellCindex[i-1])
-    if HarrellCindex_p[i-1]<=0.001:
-        colors.append("cornflowerblue")
-    elif HarrellCindex_p[i-1]<=0.01:
-        colors.append("cornflowerblue")
-    elif HarrellCindex_p[i-1]<=0.05:
-        colors.append("cornflowerblue")
-    else:            
-        colors.append("lightgray")
-    # Summary
-    stats_string += f"Feature: {TDMaps.columns[i]} with a c-index of {HarrellCindex[i-1]} (p={HarrellCindex_p[i-1]})\n"
-    # Prediction
-    x_new, low_p = {}, 0
-    for pc in percentiles2check:
-        x_new[f"P({low_p},{pc[0]})"] = x_clean[(x_clean>np.percentile(x_clean, low_p))&(x_clean<=np.percentile(x_clean, pc[0]))].mean()
-        x_new[f"P({pc[1]},{100-low_p})"] = x_clean[(x_clean>np.percentile(x_clean, pc[1]))&(x_clean<=np.percentile(x_clean, 100-low_p))].mean()
-        low_p = pc[0]
-    x_new = pd.DataFrame.from_dict(
-            x_new,
-            orient="index",
-    )
-    Cmodel_pred.append(
-        Cmodel.predict_survival_function(x_new)
-    )
-ax.bar(
-    range(0,len(TDMaps.columns)-1), 
-    np.sort(HarrellCindex)[::-1],
-    edgecolor="black",
-    color=[colors[ii] for ii in np.argsort(HarrellCindex)[::-1]]
-)
-for ii, pval in enumerate(HarrellCindex_p[np.argsort(HarrellCindex)[::-1]]):
-    if pval<=0.001:
-        ax.text(ii-.25, .65, '***', color='black',fontsize=10, transform=ax.transData)
-    elif pval<=0.01:
-        ax.text(ii-.25, .65, '**', color='black',fontsize=10, transform=ax.transData)
-    elif pval<=0.05:
-        ax.text(ii-.25, .65, '*', color='black',fontsize=10, transform=ax.transData)
-    else:            
-        ax.text(ii-.25, .65, 'n.s.', color='black',fontsize=10, transform=ax.transData)
-ax.hlines(0.5, -1, len(TDMaps.columns)-1, color='black', linewidth=.75, linestyle='--')
-ax.spines[["top","right"]].set_visible(False)
-ax.set_ylabel("Harrell's C-index")
-ax.set_ylim([0,0.7])
-ax.set_xlim([-1,len(TDMaps.columns)])
-ax.set_xticks(range(0,len(TDMaps.columns)-1))
-ax.set_xticklabels([TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]], rotation=75)
-ax.spines['bottom'].set_bounds(0,len(TDMaps.columns)-2)
-ax.spines['left'].set_bounds(0,.7)
-fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-selection_status-1.{args.format}"), dpi=300, format=args.format)
-plt.close()
-# Plot the prediction
-start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
-colors = [
-    start_color * (1 - cstep) + end_color * cstep
-    for cstep in np.linspace(0, 1, len(percentiles2check)*2)
-]
-cmap = mcolors.LinearSegmentedColormap.from_list("salmon_royalblue", ["salmon", "royalblue"])
-norm = plt.Normalize(vmin=0, vmax=1)  # Scale from 0 to 1
-sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-sm.set_array([])  # Required for ScalarMappable
-fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
-ax = ax.flatten()
-time = np.arange(0, np.nanmax(TDMaps["OS"].values)) 
-for i in range(0,len(TDMaps.columns)-1):
-    k_color = 0
-    for j in range(0,len(Cmodel_pred[i]),2):
-        survival_pred = Cmodel_pred[i][j]
-        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[k_color])
-        survival_pred = Cmodel_pred[i][j+1]
-        ax[i].step(time/daysXmonth, survival_pred(time), where="post", color=colors[-1-k_color])
-        k_color += 1
-    if i==0:
-        cbar_ax = inset_axes(ax[i], width="5%", height="15%", loc="upper right", borderpad=2)  
-        cbar = plt.colorbar(sm, cax=cbar_ax, orientation="vertical")
-        cbar.set_ticks([0, 1])
-        cbar.set_ticklabels([r"TDI $P_{(0-20)}$", r"TDI $P_{(80-100)}$"], fontsize=15)
-        cbar.ax.yaxis.set_ticks_position('left')
-        cbar.ax.yaxis.set_label_position('left') 
-    ax[i].text(
-        0, 
-        0.05, 
-        r'$C^{H}$'+f" = {round(HarrellCindex[i],4)}\n"+r'$p_{perm}$'+f" = {round(HarrellCindex_p[i],4)}", 
-        color='black' if HarrellCindex_p[i]>0.05 else 'red',
-        fontsize=12, 
-        transform=ax[i].transData
-    )
-    ax[i].set_ylim([0,1])
-    ax[i].set_xlim([-5,75])
-    ax[i].set_xticks(range(0,80,10))
-    ax[i].set_xticklabels(range(0,80,10))
-    ax[i].set_yticks([0,0.2,0.4,0.6,0.8,1])
-    ax[i].set_yticklabels([0,0.2,0.4,0.6,0.8,1])
-    ax[i].spines['left'].set_bounds(0,1)
-    ax[i].spines['bottom'].set_bounds(0,70)
-    ax[i].set_title(TDMaps.columns[i+1], fontweight="bold", fontsize=12)
-    ax[i].set_xlabel("Time (months)", fontsize=12)
-    ax[i].set_ylabel("Overall survival", fontsize=12)
-    ax[i].spines[["top", "right"]].set_visible(False)
-fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
-plt.close()
-
 with open(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/stats-featuresTDI_CoxPHazard.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
@@ -1182,8 +1060,8 @@ feature_labels = [ # Manual sorting for now, based on the C index
     "Whole TDMap",
     "Core+Enhancing TDMap",
     "Non-enhancing TDMap",
-    #"Core lesion TDMap",
-    #"Core TDMap", 
+    "Core lesion TDMap",
+    "Core TDMap", 
 ]
 TDMaps_final = TDMaps[["OS"]+feature_labels]
 mask = TDMaps_final[TDMaps_final.columns].notna().all(axis=1) & ~np.isnan(life)
@@ -1197,7 +1075,7 @@ OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
 param_grid = {"select__k": np.arange(1, len(TDMaps_filtered.columns))}
 mean_test = np.zeros((runs, len(splits)))
 k_best_results = np.zeros((runs, len(splits)))
-fig, ax = plt.subplots(1,3, figsize=(12,6))
+fig, ax = plt.subplots(1,3, figsize=(15,6))
 for tt in range(runs):
     print(f"Right censoring: Select K features workflow; run No. {tt+1}")
     for i, spl in enumerate(splits):
@@ -1262,98 +1140,6 @@ ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
 fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_feature-importance.{args.format}"), dpi=300, format=args.format)
-
-# Discard right censored data and possible nan values
-#feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-2] 
-feature_labels = [ # Manual sorting for now, based on the C index
-    "Whole lesion TDMap",
-    "Non-enhancing lesion TDMap",
-    "Enhancing lesion TDMap",
-    "Core+Enhancing lesion TDMap",
-    "Whole TDMap",
-    "Core lesion TDMap",
-    "Core TDMap", 
-    "Non-enhancing TDMap",
-    #"Core+Enhancing TDMap",
-    #"Enhancing TDMap",
-]
-TDMaps_final = TDMaps[["OS"]+feature_labels]
-mask = TDMaps_final[TDMaps_final.columns].notna().all(axis=1) & ~np.isnan(life) & life==1
-TDMaps_filtered = TDMaps_final.loc[mask]
-life_filtered = life[mask]
-features = TDMaps_filtered[TDMaps_filtered.columns[1:]].values
-OS_STATS = []
-OS_STATS.extend([(st, os) for st,os in zip(life_filtered,TDMaps_filtered["OS"].values)])
-OS_STATS = np.array(OS_STATS, dtype=[('event', 'bool'),('time', '<f4')])
-
-param_grid = {"select__k": np.arange(1, len(TDMaps_filtered.columns))}
-mean_test = np.zeros((runs, len(splits)))
-k_best_results = np.zeros((runs, len(splits)))
-fig, ax = plt.subplots(1,3, figsize=(12,6))
-for tt in range(runs):
-    print(f"Without censoring: Select K features workflow; run No. {tt+1}")
-    for i, spl in enumerate(splits):
-        cv = KFold(n_splits=spl, shuffle=True, random_state=None) # Assign a given random state if you want to ensure reproducibility
-        gcv = GridSearchCV(pipe, param_grid, return_train_score=True, cv=cv)
-        gcv.fit(features, OS_STATS)        
-        results = pd.DataFrame(gcv.cv_results_).sort_values(by="mean_test_score", ascending=False)
-        mean_test[tt,i] = results["mean_test_score"].values.max()
-        k_best_results[tt,i] = results["param_select__k"].values[0]
-        ax[0].plot(spl, mean_test[tt,i], 'o', color='black', alpha=0.25, markersize=5)
-
-best_split = splits[mean_test.mean(axis=0).argmax()]-2
-k_feat, feature_counts = np.unique(k_best_results[:,best_split], return_counts=True)
-ax[0].errorbar(splits, mean_test.mean(axis=0), yerr=mean_test.std(axis=0)/np.sqrt(splits), linestyle='-', color='blue', linewidth=1, fmt='x',markersize=10, capsize=10)
-rect = patches.Rectangle((best_split+1.75, mean_test.mean(axis=0).max()-.0125), 0.5, 0.025, linewidth=2, edgecolor='r', facecolor='none')
-ax[0].add_patch(rect)
-ax[0].spines[["top","right"]].set_visible(False)
-ax[0].set_xticks(splits)
-ax[0].set_xticklabels(splits)
-ax[0].set_xlim([splits[0]-.5, splits[-1]+.5])
-ax[0].set_xlabel("No. of splits")
-ax[0].set_ylabel("Average Harrell's C index")
-ax[0].spines['bottom'].set_bounds(splits[0], splits[-1])
-ax[1].bar(
-    k_feat, 
-    feature_counts,
-    edgecolor="black",
-    color="gray",
-    width=.35
-)
-ax[1].spines[["top","right"]].set_visible(False)
-ax[1].set_xlim([.5,features.shape[-1]+.5])
-ax[1].set_xticks(range(1,features.shape[-1]+1))
-ax[1].set_xticklabels([f"k={ii}" for ii in range(1,features.shape[-1]+1)])
-ax[1].set_ylabel("No. of ocurrences")
-ax[1].set_xlabel("No. of selected TD Maps")
-ax[1].spines['bottom'].set_bounds(1,features.shape[-1])
-ax[1].set_ylim([0, max(feature_counts)+.5])
-ax[1].set_yticks(range(0,max(feature_counts)+1))
-ax[1].set_yticklabels(range(0,max(feature_counts)+1))
-
-feature_participation = np.zeros((len(feature_labels),)) # Same order as in labels
-for i in range(len(k_feat)):
-    k_fs = int(k_feat[i])
-    for j in range(k_fs):
-        feature_participation[j] += feature_counts[i]
-ax[2].bar(
-    range(1,features.shape[-1]+1), 
-    100*feature_participation/runs,
-    edgecolor="black",
-    color="gray",
-    width=.35
-)
-ax[2].spines[["top","right"]].set_visible(False)
-ax[2].set_xlim([.5,features.shape[-1]+.5])
-ax[2].set_xticks(range(1,features.shape[-1]+1))
-ax[2].set_xticklabels(feature_labels, rotation=75)
-ax[2].set_ylabel("Percentage of participation (%)")
-ax[2].spines['bottom'].set_bounds(1,features.shape[-1])
-ax[2].set_ylim([0, 100])
-ax[2].set_yticks([0,20,40,60,80,100])
-ax[2].set_yticklabels([0,20,40,60,80,100])
-fig.tight_layout()
-fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/CoxPHazard_feature-importance_status-1.{args.format}"), dpi=300, format=args.format)
 
 print("FINISHED FEATURE IMPORTANCE USING GRID SEARCH AND COX PH MODELS")
 print("   ************************   ")
@@ -2163,6 +1949,14 @@ for i in range(1, len(TDMaps.columns),2):
         ax[j].text(0.65, 0.15, r"$Z =$"+f"{round(Zs[j],4)} \np = {round(ps_DL[j],4)} \np"+r'$_{corrected}$'+f" = {round(ps_DL_corrected[j],4)}", transform=ax[j].transAxes, 
             fontsize=12, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if ps_DL[j]<=0.05 else "black")      
 
+    addon = TDMaps.columns[i].split(" ")[0]
     fig.tight_layout()
-    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{TDMaps.columns[i].split(" ")[0]}.{args.format}"), dpi=300, format=args.format)
+    fig.savefig(
+        os.path.join(
+            args.path, 
+            f"Figures/TDMaps_IDH1-WT/{figs_folder}/Death-prediction_model-TDI_metric-DeLong_features-{addon}.{args.format}"
+        ), 
+        dpi=300, 
+        format=args.format
+    )
     plt.close(fig)
