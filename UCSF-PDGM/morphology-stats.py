@@ -34,7 +34,9 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score, make_scorer
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument("path", type=str, help="Path to the directory where the volume and survival data are stored")
 parser.add_argument("--correction", type=str, choices=["fwer","fdr"], default="fdr", help="Multiple hypotheses correction method")
+parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
 args = parser.parse_args()
 
 voxel_size = (0.5**3) * (1/1000) # 0.5 (mm³/voxel) X 0.001 (cm³/mm³)
@@ -49,9 +51,9 @@ months = np.array([6,12,18,24,30,36,42,48])
 nrows, ncols = 1, 5
 figsize = (25,6)
 figs_folder = f"Morphology-tissues_GBM-Wildtype"
-os.makedirs("../Figures/TDMaps_Grade-IV/"+figs_folder, exist_ok=True)
+os.makedirs(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/",figs_folder), exist_ok=True)
 
-morphology = pd.read_csv(f"../Figures/TDMaps_Grade-IV/demographics-morphology_mask-tissues.csv")
+morphology = pd.read_csv(os.path.join(args.path, f"TDMaps_Grade-IV/morphology-tissues.csv"))
 morphology_tissues_all = morphology[
     [
         "OS",
@@ -66,9 +68,9 @@ morphology_tissues_all = morphology[
 
 morphology_tissues_all = morphology_tissues_all.loc[morphology["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 morphology_tissues_all = morphology_tissues_all.loc[morphology["OS"].fillna('unknown')!='unknown']
-morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT status"].isin(["positive", "negative"])]
-morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT index"].fillna('unknown')!='unknown']
-morphology_tissues_all = morphology_tissues_all.loc[morphology["1p/19q"].fillna('unknown').isin(["intact", "unknown"])]
+#morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT status"].isin(["positive", "negative"])]
+#morphology_tissues_all = morphology_tissues_all.loc[morphology["MGMT index"].fillna('unknown')!='unknown']
+#morphology_tissues_all = morphology_tissues_all.loc[morphology["1p/19q"].fillna('unknown').isin(["intact", "unknown"])]
 
 morphology_tissues = morphology_tissues_all#.loc[demographics_TD["Final pathologic diagnosis (WHO 2021)"]=="Glioblastoma  IDH-wildtype"] 
 life = morphology_tissues_all["1-dead 0-alive"].values
@@ -96,7 +98,7 @@ stats_string += f"No. of patients with a registered event (1-dead/0-alive): {a}\
 stats_string += f"No. of dead patients (without right censoring): {b} ({round(100*b/a,2)}%)\n"
 stats_string += f"No. of patients with right censoring: {c} ({round(100*c/a,2)}%)\n"
 
-with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt", "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 ####################################################################################################################################################################
@@ -155,7 +157,7 @@ ax3.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=1)
 ax6.set_title('FWER Corrected (status=1)' if fwer else "FDR Corrected (status=0)", fontweight='bold', fontsize=12)
 ax3.tick_params(axis='both', length=0) 
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/correlation-morphology.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/correlation-morphology.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -190,7 +192,7 @@ for status in [0,1]:
         ax[i-1].set_ylabel("Overall survival (months)", fontweight="bold", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_scatter_status-{status}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_scatter_status-{status}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -261,7 +263,7 @@ for i in range(1,len(morphology_tissues.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
@@ -329,7 +331,7 @@ for i in range(1,len(morphology_tissues.columns)):
     if (i-1)==0:
         ax[i-1].legend(frameon=True, ncols=1, loc="upper right")
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-morphology_step-monthly_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 ####################################################################################################################################################################
@@ -384,8 +386,8 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
                 y_masked_big = y_masked[x_masked>=np.percentile(x_masked, 100-perc)]
                 _, pv = mannwhitneyu(y_masked_small, y_masked_big, alternative='two-sided')
                 pv_us[j,0] = pv
-                ax[k_ax+5].plot(np.full(len(y_masked_small),m-1),y_masked_small.values,'o', markersize=2, color='royalblue', label=f"Low TDI (P<={perc})" if j==0 else None)
-                ax[k_ax+5].plot(np.full(len(y_masked_big),m+1),y_masked_big.values,'o', markersize=2, color='salmon', label=f"High TDI (P>={100-perc})" if j==0 else None)
+                ax[k_ax+5].plot(np.full(len(y_masked_small),m-1),y_masked_small.values,'o', markersize=2, color='royalblue', label=f"Small (P<={perc})" if j==0 else None)
+                ax[k_ax+5].plot(np.full(len(y_masked_big),m+1),y_masked_big.values,'o', markersize=2, color='salmon', label=f"Big (P>={100-perc})" if j==0 else None)
                 if pv<=0.001:
                     ax[k_ax+5].text(m-1.5, 1300, '***', color='black',fontsize=10)
                 elif pv<=0.01:
@@ -457,9 +459,9 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
                 k_ax += 1
         fig.tight_layout()
         if status==1:
-            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_death-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_death-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         else:
-            fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_dropout-cutoff_status-{status}_p-{perc}.pdf", dpi=300, format='pdf')
+            fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_dropout-cutoff_status-{status}_p-{perc}.{args.format}"), dpi=300, format=args.format)
         plt.close()
 
     ## Median survival analyses
@@ -496,7 +498,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         ax[i-1].set_ylabel("Overall survival (months)", fontsize=12)
         ax[i-1].spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/OS-morphology_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with dead subjects
@@ -520,14 +522,14 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         time, survival_prob, conf_int = kaplan_meier_estimator(
             lifesmall, psmall, conf_type="log-log"
         )
-        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Low TDI", color="royalblue")
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Small", color="royalblue")
         ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="royalblue")
         for t in psmall[lifesmall==0].values: # Censoring times
             ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='royalblue')        
         time, survival_prob, conf_int = kaplan_meier_estimator(
             lifebig, pbig, conf_type="log-log"
         )
-        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"High TDI", color="salmon")
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Big", color="salmon")
         ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="salmon")
         for t in pbig[lifebig==0].values: # Censoring times
             ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='salmon')
@@ -566,7 +568,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
     ## Kaplan-Meier analyses with censoring
@@ -590,14 +592,14 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         time, survival_prob, conf_int = kaplan_meier_estimator(
             lifesmall, psmall, conf_type="log-log"
         )
-        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Low TDI", color="royalblue")
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Small", color="royalblue")
         ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="royalblue")
         for t in psmall[lifesmall==0].values: # Censoring times
             ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='royalblue')        
         time, survival_prob, conf_int = kaplan_meier_estimator(
             lifebig, pbig, conf_type="log-log"
         )
-        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"High TDI", color="salmon")
+        ax[i-1].step(time/daysXmonth, survival_prob, where="post", label=f"Big", color="salmon")
         ax[i-1].fill_between(time/daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="salmon")
         for t in pbig[lifebig==0].values: # Censoring times
             ax[i-1].plot(time[time==t]/daysXmonth, survival_prob[time==t], "|", color='salmon')
@@ -637,7 +639,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         if i==1:
             ax[i-1].legend(frameon=False)        
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/KM-curves_percentiles-{plow}-{phigh}.{args.format}"), dpi=300, format=args.format)
     plt.close()
 
 ####################################################################################################################################################################
@@ -706,7 +708,7 @@ for i in range(len(morphology_tissues.columns)-1):
         ax[i,1].set_xlabel("Percentiles", fontweight='bold')
         ax[i,2].set_xlabel("Percentiles", fontweight='bold')
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/p-values_percentiles.{args.format}"), dpi=300, format=args.format)
 plt.close()
 print("FINISHED SURVIVAL AND KAPLAN-MEIER ANALYSES")
 print("   ************************   ")
@@ -793,7 +795,7 @@ ax.set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii 
 ax.spines['bottom'].set_bounds(0,len(morphology_tissues.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection.{args.format}"), dpi=300, format=args.format)
 plt.close()
 # Plot the prediction
 start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
@@ -844,7 +846,7 @@ for i in range(0,len(morphology_tissues.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
 stats_string += "------------------------------\n"
@@ -928,7 +930,7 @@ ax.set_xticklabels([morphology_tissues.columns[ii+1][:-8]+r' ($cm^{3}$)' for ii 
 ax.spines['bottom'].set_bounds(0,len(morphology_tissues.columns)-2)
 ax.spines['left'].set_bounds(0,.7)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-selection_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 # Plot the prediction
 start_color, end_color = np.array(to_rgba("royalblue")), np.array(to_rgba("salmon"))
@@ -979,10 +981,10 @@ for i in range(0,len(morphology_tissues.columns)-1):
     ax[i].set_ylabel("Overall survival", fontsize=12)
     ax[i].spines[["top", "right"]].set_visible(False)
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_features-prediction_status-1.{args.format}"), dpi=300, format=args.format)
 plt.close()
 
-with open(f"../Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresMORPH_CoxPHazard.txt", "w") as stats_file:
+with open(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/stats-featuresMORPH_CoxPHazard.txt"), "w") as stats_file:
     stats_file.write(stats_string)
 
 print("FINISHED FEATURE IMPORTANCE USING COX PH MODELS AND C-index")
@@ -1096,7 +1098,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance.{args.format}"), dpi=300, format=args.format)
 
 # Discard right censored data and possible nan values
 #feature_labels = [TDMaps.columns[ii+1] for ii in np.argsort(HarrellCindex)[::-1]][:-1] 
@@ -1183,7 +1185,7 @@ ax[2].set_ylim([0, 100])
 ax[2].set_yticks([0,20,40,60,80,100])
 ax[2].set_yticklabels([0,20,40,60,80,100])
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/CoxPHazard_feature-importance_status-1.{args.format}"), dpi=300, format=args.format)
 
 print("FINISHED FEATURE IMPORTANCE USING GRID SEARCH AND COX PH MODELS")
 print("   ************************   ")
@@ -1290,7 +1292,7 @@ for i_ax, splits in enumerate(N_splits):
         ax[i_ax,1].set_xticklabels([])
         ax[i_ax,1].tick_params(axis='x', length=0) 
 fig.tight_layout()
-fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.pdf", dpi=300, format='pdf')
+fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-Cox.{args.format}"), dpi=300, format=args.format)
 plt.close()
 print("*****************************")
 
@@ -1380,7 +1382,7 @@ for min_samples_leaf in [6,15,25,30]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-RSF_minLeaf-{min_samples_leaf}.{args.format}"), dpi=300, format=args.format)
     plt.close()
     print("*****************************")
 """
@@ -1425,22 +1427,22 @@ for model in ["linear","rbf"]:#
             for j,m in enumerate(months):
                 print(f"         {morphology_tissues.columns[i][:-8]}: {m} months")
                 month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
-                tdi = x_clean[~month_mask]
+                volume = x_clean[~month_mask]
                 y_month_mask = y_clean[~month_mask]
-                tdi_mask = (tdi>np.percentile(tdi, plow)) & (tdi<np.percentile(tdi, phigh)) # Discard value between percentiles (to reproduce Salvalaggio, et al. 2023)
-                tdi = tdi[~tdi_mask]
-                y_month_mask = y_month_mask[~tdi_mask]
+                volume_mask = (volume>np.percentile(volume, plow)) & (volume<np.percentile(volume, phigh)) # Discard value between percentiles (to reproduce Salvalaggio, et al. 2023)
+                volume = volume[~volume_mask]
+                y_month_mask = y_month_mask[~volume_mask]
                 died = np.where(y_month_mask>=m*daysXmonth, 0, 1)
                 nums[j,:] = [(1-died).sum(), died.sum()]
                 ax[i-1].text(m-2, -0.175, f"{int(nums[j,0])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="forestgreen") # Numbers alive
                 ax[i-1].text(m-2, -0.225, f"{int(nums[j,1])}", transform=ax[i-1].transData, fontsize=12, verticalalignment='top', color="darkorange") # Numbers dead
-                tdi = tdi / max(tdi)
+                volume = volume / max(volume)
                 for kk, metric in enumerate(scoring.keys()):
                     RSKF = RepeatedStratifiedKFold(n_splits=splits, n_repeats=runs)
                     classifier = SVC(C=1, kernel=model, class_weight='balanced')
                     cv_results, _, pv_results = permutation_test_score(#cross_validate(
                         classifier,
-                        tdi.values.reshape(-1,1),
+                        volume.values.reshape(-1,1),
                         y=died,
                         scoring=scoring[metric],
                         cv=RSKF,
@@ -1510,15 +1512,15 @@ for model in ["linear","rbf"]:#
                 ax_bis[i-1].legend(frameon=False, ncols=1, loc="lower right")
         fig.tight_layout()
         fig_bis.tight_layout()
-        fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI-{plow}.pdf", dpi=300, format='pdf')
-        fig_bis.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percTDI_significance-{plow}.pdf", dpi=300, format='pdf')
+        fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percvolume-{plow}.{args.format}"), dpi=300, format=args.format)
+        fig_bis.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-{model}SVC_percvolume_significance-{plow}.{args.format}"), dpi=300, format=args.format)
         plt.close(fig)
         plt.close(fig_bis)
 
 """
-# Using the TDI classifiers to compute the time-dependent AUC(t)
+# Using the volume classifiers to compute the time-dependent AUC(t)
 for plow, phigh in [(25,75),(50,50)]:
-    print(f"TDI classifier: Percentiles ({plow},{phigh})")
+    print(f"Volume classifier: Percentiles ({plow},{phigh})")
     fig, ax = plt.subplots(len(N_splits),2, figsize=(16,5*len(N_splits)), gridspec_kw={'width_ratios': [2, 1]})
     for i_ax, splits in enumerate(N_splits):
         print(f"No. of splits: {splits}")
@@ -1542,7 +1544,7 @@ for plow, phigh in [(25,75),(50,50)]:
             RKF = RepeatedKFold(n_splits=splits, n_repeats=runs)
             fails = 0
             for j, (train_index, test_index) in enumerate(RKF.split(x_clean, OS_STATS)):
-                # MODEL 4: TDI features
+                # MODEL 4: volume features
                 try:
                     DynAUC[i-1,j,:], DynAUC_average[i-1,j] = cumulative_dynamic_auc(
                         OS_STATS,#[train_index]
@@ -1577,7 +1579,7 @@ for plow, phigh in [(25,75),(50,50)]:
         ax[i_ax,1].set_xlim([-1, len(morphology_tissues.columns)-1])
         ax[i_ax,1].set_xticks(range(0, len(morphology_tissues.columns)-1))
         ax[i_ax,1].set_ylim([0.3,0.7])
-        ax[i_ax,1].set_yticks([.3,.4,.5,.6,.7])
+        ax[i_ax,1].set_yticks([.3,.4,.5,.6,.7]) 
         ax[i_ax,1].set_yticklabels([])
         ax[i_ax,1].tick_params(axis='y', length=0) 
         if i_ax==(len(N_splits)-1):
@@ -1591,14 +1593,14 @@ for plow, phigh in [(25,75),(50,50)]:
             ax[i_ax,1].set_xticklabels([])
             ax[i_ax,1].tick_params(axis='x', length=0) 
     fig.tight_layout()
-    fig.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-TDI_percTDI-{plow}.pdf", dpi=300, format='pdf')
+    fig.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Survival-prediction_model-volume_percvolume-{plow}.{args.format}"), dpi=300, format=args.format)
     plt.close(fig)
 
-# Using the TDI classifiers to compute the AUC at different survival times
+# Using the volume classifiers to compute the AUC at different survival times
 months = [12,24,36,48]
 colors = ["#1F77B4", "#FF7F0E", "#2CA02C", "#9467BD"]
 for plow, phigh in percentiles2check:
-    print(f"TDI classifier: Percentiles ({plow},{phigh})")
+    print(f"Volume classifier: Percentiles ({plow},{phigh})")
     fig_roc, ax_roc = plt.subplots(nrows, ncols, figsize=figsize)
     ax_roc = ax_roc.flatten()
     fig_auc, ax_auc = plt.subplots(nrows, ncols, figsize=figsize)
@@ -1621,25 +1623,25 @@ for plow, phigh in percentiles2check:
         for j,m in enumerate(months):
             print(f"         {morphology_tissues.columns[i]}: {m} months")
             month_mask = (y_clean<=m*daysXmonth) & (life_clean==0) # Discard censored data points with censoring times smaller than cutoff
-            tdi = x_clean[~month_mask]
+            volume = x_clean[~month_mask]
             y_month_mask = y_clean[~month_mask]
-            tdi_mask = (tdi>np.percentile(tdi, plow)) & (tdi<np.percentile(tdi, phigh)) # Discard value between percentiles (to emualte Salvalaggio, et al. 2023)
-            tdi = tdi[~tdi_mask]
-            y_month_mask = y_month_mask[~tdi_mask]
+            volume_mask = (volume>np.percentile(volume, plow)) & (volume<np.percentile(volume, phigh)) # Discard value between percentiles (to emualte Salvalaggio, et al. 2023)
+            volume = volume[~volume_mask]
+            y_month_mask = y_month_mask[~volume_mask]
             died = np.where(y_month_mask>=(m*daysXmonth), 0, 1)
-            fpr, tpr, thresholds = roc_curve(died, tdi)
+            fpr, tpr, thresholds = roc_curve(died, volume)
             # Metrics
             optimal_idx = np.argmax(tpr - fpr)
             optimal_th = thresholds[optimal_idx]
-            death_preds = np.where(tdi>=optimal_th, 1, 0)
-            auc = roc_auc_score(died, tdi)
+            death_preds = np.where(volume>=optimal_th, 1, 0)
+            auc = roc_auc_score(died, volume)
             acc = accuracy_score(died, death_preds)
             bacc = balanced_accuracy_score(died, death_preds)
             # Permute labels to compute the significance of the metrics
             pop_auc, pop_acc, pop_bacc = [], [], []
             for _ in range(n_perms):
                 perm_deaths = np.random.permutation(died)
-                pop_auc.append(roc_auc_score(perm_deaths, tdi))
+                pop_auc.append(roc_auc_score(perm_deaths, volume))
                 pop_acc.append(accuracy_score(perm_deaths, death_preds))
                 pop_bacc.append(balanced_accuracy_score(perm_deaths, death_preds))
             p_auc[j], p_acc[j], p_bacc[j] = np.mean(np.array(pop_auc) >= auc), np.mean(np.array(pop_acc) >= acc), np.mean(np.array(pop_bacc) >= bacc)
@@ -1760,15 +1762,15 @@ for plow, phigh in percentiles2check:
         if i==1:
             ax_roc[i-1].legend(frameon=False)
     fig_roc.tight_layout()
-    fig_roc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ROC.pdf", dpi=300, format='pdf')
+    fig_roc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-volume_p-{plow}_metric-ROC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_roc)          
     fig_auc.tight_layout()
-    fig_auc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-AUC.pdf", dpi=300, format='pdf')
+    fig_auc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-volume_p-{plow}_metric-AUC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_auc)          
     fig_acc.tight_layout()
-    fig_acc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-ACC.pdf", dpi=300, format='pdf')
+    fig_acc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-volume_p-{plow}_metric-ACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_acc)          
     fig_bacc.tight_layout()
-    fig_bacc.savefig(f"../Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-TDI_p-{plow}_metric-BACC.pdf", dpi=300, format='pdf')
+    fig_bacc.savefig(os.path.join(args.path, f"Figures/TDMaps_Grade-IV/{figs_folder}/Death-prediction_model-volume_p-{plow}_metric-BACC.{args.format}"), dpi=300, format=args.format)
     plt.close(fig_bacc)      
     print("**************************")
