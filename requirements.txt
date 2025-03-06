@@ -1,0 +1,13 @@
+pandas 
+numpy
+matplotlib
+tqdm
+nibabel
+nilearn
+scipy
+scikit-learn
+statsmodels
+scikit-survival
+
+# To run the Jupyter notebooks, you must install the ipykernel package. 
+# With VSCode, this step should be done automatically.
