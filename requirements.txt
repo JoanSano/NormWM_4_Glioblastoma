@@ -8,6 +8,7 @@ scipy
 scikit-learn
 statsmodels
 scikit-survival
+seaborn
 
 # To run the Jupyter notebooks, you must install the ipykernel package. 
 # With VSCode, this step should be done automatically.
