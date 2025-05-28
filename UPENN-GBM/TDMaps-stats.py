@@ -617,6 +617,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
     ## Median survival analyses
     fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
     ax = ax.flatten()
+    print("Median survival times and [1st, 3rd] quartiles (MONTHS)>>")
     for i in range(1,len(TDMaps.columns)):
         x = TDMaps[TDMaps.columns[i]]
         y = TDMaps["OS"]        
@@ -638,6 +639,10 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
             widths=[0.4,0.4]
         )
         # Stats
+        average_small, average_large = np.mean(psmall[lifesmall==1]/daysXmonth), np.mean(pbig[lifebig==1]/daysXmonth)
+        print(
+            f"{TDMaps.columns[i]}: {average_small} [{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.25)},{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.75)}] / {average_large} [{np.quantile(pbig[lifebig==1]/daysXmonth, 0.25)},{np.quantile(psmall[lifebig==1]/daysXmonth, 0.75)}]"
+        )
         _, pv = mannwhitneyu(psmall[lifesmall==1], pbig[lifebig==1], alternative='two-sided')
         Median_ps[i-1,p_iter] = pv
         ax[i-1].text(0.35, 0.85, r'$p_U$'+f' = {pv:.4f}', transform=ax[i-1].transAxes, 
@@ -650,6 +655,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
     fig.tight_layout()
     fig.savefig(os.path.join(args.path, f"Figures/TDMaps_IDH1-WT/{figs_folder}/OS-TDMaps_percentiles-{plow}-{phigh}_status-1.{args.format}"), dpi=300, format=args.format)
     plt.close()
+    print("++++"*50)
 
     ## Kaplan-Meier analyses with dead subjects
     fig, ax = plt.subplots(nrows, ncols, figsize=figsize)
