@@ -643,7 +643,7 @@ for p_iter, (plow, phigh) in enumerate(percentiles2check):
         # Stats
         average_small, average_large = np.mean(psmall[lifesmall==1]/daysXmonth), np.mean(pbig[lifebig==1]/daysXmonth)
         print(
-            f"{TDMaps.columns[i]}: {average_small} [{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.25)},{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.75)}] / {average_large} [{np.quantile(pbig[lifebig==1]/daysXmonth, 0.25)},{np.quantile(psmall[lifebig==1]/daysXmonth, 0.75)}]"
+            f"{TDMaps.columns[i]}: {average_small} [{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.25)},{np.quantile(psmall[lifesmall==1]/daysXmonth, 0.75)}] / {average_large} [{np.quantile(pbig[lifebig==1]/daysXmonth, 0.25)},{np.quantile(pbig[lifebig==1]/daysXmonth, 0.75)}]"
         )
         _, pv = mannwhitneyu(psmall[lifesmall==1], pbig[lifebig==1], alternative='two-sided')
         Median_ps[i-1,p_iter] = pv
