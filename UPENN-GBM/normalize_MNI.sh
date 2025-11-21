@@ -61,7 +61,7 @@ for subject in "$BASE_DIR"/UPENN-GBM_data-raw_V3-organized/*; do
                         -m "${OUTPUT_NAME}_biasfieldcorrected.nii.gz" \
                         -o "${OUTPUT_NAME}"__ \
                         -j 1 \
-                        -x "${MNI_TEMPLATE}_mask.nii.gz" "$INVERSE_MASK" 
+                        -x "${MNI_TEMPLATE}_mask.nii.gz", "$INVERSE_MASK" 
 
                     rm "$INVERSE_MASK"
                 else

@@ -47,7 +47,7 @@ for subject in "$BASE_DIR"/UCSF-PDGM-v3/*; do
                     -m "$REFERENCE_IMAGE" \
                     -o "${OUTPUT_NAME}"__ \
                     -j 1 \
-                    -x "$MNI_TEMPLATE""_mask.nii.gz" "$INVERSE_MASK" 
+                    -x "$MNI_TEMPLATE""_mask.nii.gz", "$INVERSE_MASK" 
 
                 rm "$INVERSE_MASK"
             fi
