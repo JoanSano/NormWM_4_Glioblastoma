@@ -37,7 +37,10 @@ for subject in "$BASE_DIR"/TCGA-GBM_data-raw_V1/*; do
                 echo "  ${subject}: Transformation already available"
             else
                 ### Masking the pathologic tissue
-                MASK_NAME=$(find "$subject" -name "*_seg.nii.gz")
+                MASK_NAME=$(find "$subject" -name "*_seg-corrected.nii.gz")
+                if [[ ! -f "$MASK_NAME" ]]; then
+                    MASK_NAME=$(find "$subject" -name "*_seg.nii.gz")
+                fi
                 INVERSE_MASK="$subject"/inverse_segmentation.nii.gz
                 fslmaths "$MASK_NAME" -bin "$INVERSE_MASK"
                 ImageMath 3 ${INVERSE_MASK} Neg ${INVERSE_MASK}
