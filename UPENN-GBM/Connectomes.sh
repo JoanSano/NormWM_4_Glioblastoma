@@ -44,9 +44,10 @@ while getopts ":i:k:d:n:s:h" opt; do
 done
 
 # Define base paths
-MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_TCGA-GBM_v1-20170717"
+MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024"
 MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/dTOR_full_tractogram"
-LESION_DIR="${MAIN_DIR}/TCGA-GBM-v1_MNI-ICBM-2009b-NLIN-ASYM_seg"
+LESION_DIR="${MAIN_DIR}/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM_automated_approx_segm"
+CORRECTED_LESION_DIR="${MAIN_DIR}/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM_corrected_segm"
 DESTINATION_MAPS="${MAIN_DIR}/TDMaps_IDH1-${IDH}"
 HCPEX="/home/joan/Documents/Parcellations/HCPex__Glasser-like+subcortical/MNI_ICBM_2009b_NLIN_ASYM/HCPex_MNI_ICBM_2009b_NLIN_ASYM.nii.gz"
 AAL3="/home/joan/Documents/Parcellations/AAL3/MNI_ICBM_2009b_NLIN_ASYM/AAL3v1_1mmxMNI_ICBM_2009b_NLIN_ASYM__Warped.nii.gz"
@@ -59,8 +60,17 @@ for lesion in $LESION_DIR/IDH1-$IDH/*; do
     ( 
         # Subject ID and directory
         SUBJECT=$(basename "$lesion")
-        SUBJECT="${SUBJECT%%_*}"
+        SUBJECT=("${SUBJECT%.*}")
+        SUBJECT=("${SUBJECT%.*}")
+        SUBJECT=$(echo "$SUBJECT" | cut -d'_' -f1-2)
         SUBJECT_DIR="${DESTINATION_MAPS}/${SUBJECT}"
+        
+        # We check whether a corrected segmentation exists
+        corrected_lesion="${CORRECTED_LESION_DIR}/IDH1-$IDH/${SUBJECT}_corrected_segm__Warped.nii.gz"
+        if [[ -f $corrected_lesion ]]; then
+          echo " INFO ${SUBJECT}: Corrected segmentation available and it will be used instead of the automatic one!"
+          lesion=$corrected_lesion
+        fi
         
         if [[ ! -d $SUBJECT_DIR ]]; then mkdir $SUBJECT_DIR; fi
         if [[ ! -d $SUBJECT_DIR"/masks" ]]; then mkdir $SUBJECT_DIR"/masks"; fi

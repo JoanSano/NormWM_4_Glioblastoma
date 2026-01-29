@@ -1,30 +1,27 @@
 #!/bin/bash
 
 # Default values
-IDH=WT
+GRADE=IV
 KEEP_TCK=1
 N=1
 
 # Usage function
 usage() {
-  echo "Usage: $0 [-i idh] [-k keep_tck] [-d dec] [-n n]"
-  echo "  -i IDH         : Specify the IDH1 statatus to analyze (default: WT; options: WT, MUT, or NOSNEC)"
+  echo "Usage: $0 [-g grade] [-k keep_tck] [-n n]"
+  echo "  -g GRADE       : Specify the grade to analyze (default: IV; options: II, III, or IV)"
   echo "  -k KEEP_TCK    : Specify whether to keep the lesion tractograms (default: 1, options: 0, 1)"
   echo "  -n N           : Specify the number of subjects to parallelize (default: 1, options: 1, ..., N)"
   exit 1
 }
 
 # Parse command-line options
-while getopts ":i:k:d:n:s:h" opt; do
+while getopts ":g:k:n:s:h" opt; do
   case ${opt} in
-    i)
-      IDH=$OPTARG
+    g)
+      GRADE=$OPTARG
       ;;
     k)
       KEEP_TCK=$OPTARG
-      ;;
-    d)
-      DEC=$OPTARG
       ;;
     n)
       N=$OPTARG
@@ -44,10 +41,10 @@ while getopts ":i:k:d:n:s:h" opt; do
 done
 
 # Define base paths
-MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_TCGA-GBM_v1-20170717"
+MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111"
 MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/dTOR_full_tractogram"
-LESION_DIR="${MAIN_DIR}/TCGA-GBM-v1_MNI-ICBM-2009b-NLIN-ASYM_seg"
-DESTINATION_MAPS="${MAIN_DIR}/TDMaps_IDH1-${IDH}"
+LESION_DIR="${MAIN_DIR}/UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM_segmentation"
+DESTINATION_MAPS="${MAIN_DIR}/TDMaps_Grade-${GRADE}"
 HCPEX="/home/joan/Documents/Parcellations/HCPex__Glasser-like+subcortical/MNI_ICBM_2009b_NLIN_ASYM/HCPex_MNI_ICBM_2009b_NLIN_ASYM.nii.gz"
 AAL3="/home/joan/Documents/Parcellations/AAL3/MNI_ICBM_2009b_NLIN_ASYM/AAL3v1_1mmxMNI_ICBM_2009b_NLIN_ASYM__Warped.nii.gz"
 
@@ -55,11 +52,13 @@ if [[ ! -d $DESTINATION_MAPS ]]; then
     mkdir $DESTINATION_MAPS
 fi
 
-for lesion in $LESION_DIR/IDH1-$IDH/*; do
+for lesion in $LESION_DIR/Grade-$GRADE/*; do
     ( 
         # Subject ID and directory
         SUBJECT=$(basename "$lesion")
-        SUBJECT="${SUBJECT%%_*}"
+        SUBJECT=("${SUBJECT%.*}")
+        SUBJECT=("${SUBJECT%.*}")
+        SUBJECT=$(echo "$SUBJECT" | cut -d'_' -f1)
         SUBJECT_DIR="${DESTINATION_MAPS}/${SUBJECT}"
         
         if [[ ! -d $SUBJECT_DIR ]]; then mkdir $SUBJECT_DIR; fi

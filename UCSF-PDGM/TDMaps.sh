@@ -53,9 +53,10 @@ done
 # TODO: Add the threshold as a parameter to the ptyhon and demographics file name
 
 # Define base paths
-MNI_TEMPLATE="../data/dTOR_full_tractogram"
-LESION_DIR="../UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM_segmentation"
-DESTINATION_MAPS="../TDMaps_Grade-${GRADE}"
+MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111"
+MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/dTOR_full_tractogram"
+LESION_DIR="${MAIN_DIR}/UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM_segmentation"
+DESTINATION_MAPS="${MAIN_DIR}/TDMaps_Grade-${GRADE}"
 DEMOGRAPHICS="${DESTINATION_MAPS}/demographics-TDMaps_streamTH-${STREAM_D_TH}.csv"
 MORPHOLOGY="${DESTINATION_MAPS}/morphology-tissues.csv"
 
