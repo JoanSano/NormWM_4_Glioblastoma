@@ -190,6 +190,27 @@ if __name__ == '__main__':
     LESION_CONNECTOME_METRICS = args.output
     ATLAS = args.atlas
     DEMOGRAPHICS = pd.read_csv(args.demographics)
+    DEMOGRAPHICS = DEMOGRAPHICS[ # Dirty solution because I am using the csv file with tract density markers
+        [
+            "ID",
+            "Sex",
+            "Age at MRI",
+            "WHO CNS Grade",
+            "Final pathologic diagnosis (WHO 2021)",
+            "MGMT status",
+            "MGMT index",
+            "1p/19q",
+            "IDH",
+            "1-dead 0-alive",
+            "OS",
+            "EOR",
+            "Biopsy prior to imaging",
+            "BraTS21 ID",
+            "BraTS21 Segmentation Cohort",
+            "BraTS21 MGMT Cohort",
+            "# Labels"
+        ]
+    ]
 
     # We preselect only the current working subject
     ID_column = DEMOGRAPHICS.columns[0] 

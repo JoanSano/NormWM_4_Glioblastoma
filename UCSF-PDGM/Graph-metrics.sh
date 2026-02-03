@@ -66,8 +66,8 @@ LABELS_AAL3="/home/joan/Documents/Parcellations/AAL3/AAL3-main/AAL3v1.nii.txt"
 
 # Create the demographics header
 METRICS_LABELS="size,density,avg_degree,avg_clustering,modularity,global_efficiency,avg_local_efficiency,avg_shortest_path_length,avg_eigenvector_centrality,avg_betweenness_centrality,avg_closeness_centrality,avg_edge_betwenness_centrality,median_edge_betwenness_centrality,min_edge_betwenness_centrality,max_edge_betwenness_centrality,avg_percolation_centrality,median_percolation_centrality,min_percolation_centrality,max_percolation_centrality,avg_participation_coef,median_participation_coef,min_participation_coef,max_participation_coef,deg_assortativity,powerlaw_exponent,LLR_distribution,distribution,s_metric_SF,avg_rich_club_coef,median_rich_club_coef,min_rich_club_coef,max_rich_club_coef" 
-echo "ID,Sex,Age at MRI,WHO CNS Grade,Final pathologic diagnosis (WHO 2021),MGMT status,MGMT index,1p/19q,IDH,1-dead 0-alive,OS,EOR,Biopsy prior to imaging,BraTS21 ID,BraTS21 Segmentation Cohort,BraTS21 MGMT Cohort,${METRICS_LABELS}" > $DEMOGRAPHICS_HCPEX
-echo "ID,Sex,Age at MRI,WHO CNS Grade,Final pathologic diagnosis (WHO 2021),MGMT status,MGMT index,1p/19q,IDH,1-dead 0-alive,OS,EOR,Biopsy prior to imaging,BraTS21 ID,BraTS21 Segmentation Cohort,BraTS21 MGMT Cohort,${METRICS_LABELS}" > $DEMOGRAPHICS_AAL3
+echo "ID,Sex,Age at MRI,WHO CNS Grade,Final pathologic diagnosis (WHO 2021),MGMT status,MGMT index,1p/19q,IDH,1-dead 0-alive,OS,EOR,Biopsy prior to imaging,BraTS21 ID,BraTS21 Segmentation Cohort,BraTS21 MGMT Cohort,# Labels,${METRICS_LABELS}" > $DEMOGRAPHICS_HCPEX
+echo "ID,Sex,Age at MRI,WHO CNS Grade,Final pathologic diagnosis (WHO 2021),MGMT status,MGMT index,1p/19q,IDH,1-dead 0-alive,OS,EOR,Biopsy prior to imaging,BraTS21 ID,BraTS21 Segmentation Cohort,BraTS21 MGMT Cohort,# Labels,${METRICS_LABELS}" > $DEMOGRAPHICS_AAL3
 
 
 for lesion in $DESTINATION/*/; do 
