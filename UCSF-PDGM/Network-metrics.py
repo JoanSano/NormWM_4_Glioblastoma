@@ -57,7 +57,7 @@ def fit_power_law_to_degrees(
     degrees = degrees[degrees > 0]
 
     if len(degrees) < min_samples or len(np.unique(degrees)) < min_unique:
-        return np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan
 
     try:
         fit = powerlaw.Fit(degrees, discrete=discrete, verbose=False)
@@ -75,7 +75,7 @@ def fit_power_law_to_degrees(
         return fit.power_law.alpha, fit.power_law.xmin, R, degree_distribution
 
     except:
-        return np.nan, np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan
 
 def newman_modularity(G, runs=100, resolution=1):
     """ TODO """
