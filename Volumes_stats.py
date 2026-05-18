@@ -75,6 +75,7 @@ os.makedirs(os.path.join(args.path, results_folder), exist_ok=True)
 data_o = pd.read_csv(os.path.join(args.path, args.data))
 
 daysXmonth = 365/12 
+voxel_size = (0.5**3) * (1/1000) # 0.5 (mm³/voxel) X 0.001 (cm³/mm³)   
 ip, dp = 10, 0.1
 percentiles2check = [(i.round(1), (100 - i).round(1)) for i in np.arange(ip, 50, dp)]
 percentiles2check.append((50, 50))
@@ -104,6 +105,13 @@ VolSizes = data_o[
     )
 VolSizes["C+E.size"] = VolSizes["E.size"].values + VolSizes["C.size"]
 life = data_o["status"].values
+
+# Change units to cm3
+VolSizes["W.size"] = VolSizes["W.size"] * voxel_size
+VolSizes["C.size"] = VolSizes["C.size"] * voxel_size
+VolSizes["NE.size"] = VolSizes["NE.size"] * voxel_size
+VolSizes["E.size"] = VolSizes["E.size"] * voxel_size
+VolSizes["C+E.size"] = VolSizes["C+E.size"] * voxel_size
 
 ####################################################################################################################################################################
 ## General numbers
@@ -970,8 +978,8 @@ ax_hr.set_yticks(y)
 ax_hr.set_yticklabels(labels, fontsize=11)
 ax_hr.set_xlabel("Hazard Ratios", fontsize=10, fontweight="bold")
 ax_hr.spines[["top", "right"]].set_visible(False)
-ax_hr.spines['bottom'].set_bounds(1,1.000001)
-ax_hr.set_xticks([1.00,1.000001])
+ax_hr.spines['bottom'].set_bounds(1,1.012)
+ax_hr.set_xticks([1.000, 1.002, 1.004, 1.006, 1.008, 1.010, 1.012])
 ax_hr.invert_yaxis()
 # --- C-index ---
 ax_ci.axvline(x=0.5, color="gray", linestyle="--", linewidth=1)
