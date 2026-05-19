@@ -247,6 +247,9 @@ def plot_umap_outcome(
         os_low_risk, 
         conf_type="log-log"
     )
+    time_low_risk = np.insert(time_low_risk, 0, 0)
+    survival_prob_low_risk = np.insert(survival_prob_low_risk, 0, 1)
+    conf_int_low_risk = np.insert(conf_int_low_risk, 0, 1, axis=1)
     if plot:
         ax[4].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
         ax[4].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low])
@@ -262,6 +265,9 @@ def plot_umap_outcome(
         os_high_risk, 
         conf_type="log-log"
     )
+    time_high_risk = np.insert(time_high_risk, 0, 0)
+    survival_prob_high_risk = np.insert(survival_prob_high_risk, 0, 1)
+    conf_int_high_risk = np.insert(conf_int_high_risk, 0, 1, axis=1)    
     if plot:
         ax[4].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color=colors_groups[top_risk_high], label="High topological risk")
         ax[4].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high])
@@ -322,6 +328,9 @@ def plot_umap_outcome(
         os_low_risk, 
         conf_type="log-log"
     )
+    time_low_risk = np.insert(time_low_risk, 0, 0)
+    survival_prob_low_risk = np.insert(survival_prob_low_risk, 0, 1)
+    conf_int_low_risk = np.insert(conf_int_low_risk, 0, 1, axis=1)
     if plot:
         ax[5].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
         ax[5].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low])
@@ -337,6 +346,9 @@ def plot_umap_outcome(
         os_high_risk, 
         conf_type="log-log"
     )
+    time_high_risk = np.insert(time_high_risk, 0, 0)
+    survival_prob_high_risk = np.insert(survival_prob_high_risk, 0, 1)
+    conf_int_high_risk = np.insert(conf_int_high_risk, 0, 1, axis=1)
     if plot:
         ax[5].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color=colors_groups[top_risk_high], label="High topological risk")
         ax[5].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high])
