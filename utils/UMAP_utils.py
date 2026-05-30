@@ -162,7 +162,7 @@ def plot_umap_outcome(
         if is_3d:
             ax[1].scatter(
                 umap_X_train[:,0], umap_X_train[:,1], umap_X_train[:,2],
-                c=training_dataframe[risk], alpha=.75, cmap=cmap
+                c=training_dataframe[risk], alpha=.75, cmap=cmap, edgecolors="black" if "gray" in cmap else None, linewidths=0.5 if "gray" in cmap else None
             )
             ax[1].set_xticks([])
             ax[1].set_yticks([])
@@ -173,7 +173,7 @@ def plot_umap_outcome(
         else:
             ax[1].scatter(
                 umap_X_train[:,0], umap_X_train[:,1],
-                c=training_dataframe[risk], alpha=.75, cmap=cmap
+                c=training_dataframe[risk], alpha=.75, cmap=cmap, edgecolors="black" if "gray" in cmap else None, linewidths=0.5 if "gray" in cmap else None
             )
             ax[1].spines[["top","right"]].set_visible(False)
             ax[1].set_xlim([umap_X_train[:,0].min()-1, umap_X_train[:,0].max()+2])
@@ -197,7 +197,7 @@ def plot_umap_outcome(
             )
             sc = ax[3].scatter(
                 umap_X_test[:,0], umap_X_test[:,1], umap_X_test[:,2],
-                c=testing_dataframe[risk], alpha=.75, cmap=cmap
+                c=testing_dataframe[risk], alpha=.75, cmap=cmap, edgecolors="black" if "gray" in cmap else None, linewidths=0.5 if "gray" in cmap else None
             )
             ax[3].set_xlabel("UMAP 1")
             ax[3].set_ylabel("UMAP 2")
@@ -212,7 +212,7 @@ def plot_umap_outcome(
             )
             sc = ax[3].scatter(
                 umap_X_test[:,0], umap_X_test[:,1],
-                c=testing_dataframe[risk], alpha=.75, cmap=cmap
+                c=testing_dataframe[risk], alpha=.75, cmap=cmap, edgecolors="black" if "gray" in cmap else None, linewidths=0.5 if "gray" in cmap else None
             )
             ax[3].spines[["top","right"]].set_visible(False)
             ax[3].set_xlim([umap_X_train[:,0].min()-1, umap_X_train[:,0].max()+2])
@@ -252,7 +252,7 @@ def plot_umap_outcome(
     conf_int_low_risk = np.insert(conf_int_low_risk, 0, 1, axis=1)
     if plot:
         ax[4].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
-        ax[4].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low])
+        ax[4].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low], edgecolor="black" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
 
     ## High topological risk
     top_risk_high = np.max(groups)
@@ -269,19 +269,19 @@ def plot_umap_outcome(
     survival_prob_high_risk = np.insert(survival_prob_high_risk, 0, 1)
     conf_int_high_risk = np.insert(conf_int_high_risk, 0, 1, axis=1)    
     if plot:
-        ax[4].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color=colors_groups[top_risk_high], label="High topological risk")
-        ax[4].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high])
+        ax[4].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color="gray" if "gray" in cmap else colors_groups[top_risk_high], label="High topological risk", linestyle="dashed" if "gray" in cmap else "-")
+        ax[4].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high], edgecolor="gray" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
     
         ### Censoring times
         for t_low, t_high in zip(os_low_risk[status_low_risk==0], os_high_risk[status_high_risk==0]): # Censoring times
             ax[4].plot(time_low_risk[time_low_risk==t_low], survival_prob_low_risk[time_low_risk==t_low], "|", color=colors_groups[top_risk_low])
-            ax[4].plot(time_high_risk[time_high_risk==t_high], survival_prob_high_risk[time_high_risk==t_high], "|", color=colors_groups[top_risk_high])
+            ax[4].plot(time_high_risk[time_high_risk==t_high], survival_prob_high_risk[time_high_risk==t_high], "|", color="gray" if "gray" in cmap else colors_groups[top_risk_high])
 
         ### Number at risk
         ax[4].text(-2, -0.01, "No. at risk", transform=ax[4].transData, fontsize=11, verticalalignment='top', color="black", fontweight='bold') 
         for i,t in enumerate(months):
             ax[4].text(t-2, -0.07, f"{(os_low_risk>=t).sum()}", transform=ax[4].transData, fontsize=11, verticalalignment='top', color=colors_groups[top_risk_low]) 
-            ax[4].text(t-2, -0.13, f"{(os_high_risk>=t).sum()}", transform=ax[4].transData, fontsize=11, verticalalignment='top', color=colors_groups[top_risk_high])
+            ax[4].text(t-2, -0.13, f"{(os_high_risk>=t).sum()}", transform=ax[4].transData, fontsize=11, verticalalignment='top', color="gray" if "gray" in cmap else colors_groups[top_risk_high])
 
     ### Log-rank test
     OS_STATS.extend([(st, ovs) for st, ovs in zip(status_low_risk==1, os_low_risk)])
@@ -333,7 +333,7 @@ def plot_umap_outcome(
     conf_int_low_risk = np.insert(conf_int_low_risk, 0, 1, axis=1)
     if plot:
         ax[5].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
-        ax[5].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low])
+        ax[5].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low], edgecolor="black" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
 
     ## High topological risk
     top_risk_high = np.max(groups)
@@ -350,19 +350,19 @@ def plot_umap_outcome(
     survival_prob_high_risk = np.insert(survival_prob_high_risk, 0, 1)
     conf_int_high_risk = np.insert(conf_int_high_risk, 0, 1, axis=1)
     if plot:
-        ax[5].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color=colors_groups[top_risk_high], label="High topological risk")
-        ax[5].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high])
+        ax[5].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color="gray" if "gray" in cmap else colors_groups[top_risk_high], label="High topological risk", linestyle="dashed" if "gray" in cmap else "-")
+        ax[5].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high], edgecolor="gray" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
         
         ### Censoring times
         for t_low, t_high in zip(os_low_risk[status_low_risk==0], os_high_risk[status_high_risk==0]): # Censoring times
             ax[5].plot(time_low_risk[time_low_risk==t_low], survival_prob_low_risk[time_low_risk==t_low], "|", color=colors_groups[top_risk_low])
-            ax[5].plot(time_high_risk[time_high_risk==t_high], survival_prob_high_risk[time_high_risk==t_high], "|", color=colors_groups[top_risk_high])
+            ax[5].plot(time_high_risk[time_high_risk==t_high], survival_prob_high_risk[time_high_risk==t_high], "|", color="gray" if "gray" in cmap else colors_groups[top_risk_high])
 
         ### Number at risk
         ax[5].text(-2, -0.01, "No. at risk", transform=ax[5].transData, fontsize=11, verticalalignment='top', color="black", fontweight='bold') 
         for i,t in enumerate(months):
             ax[5].text(t-2, -0.07, f"{(os_low_risk>=t).sum()}", transform=ax[5].transData, fontsize=11, verticalalignment='top', color=colors_groups[top_risk_low]) 
-            ax[5].text(t-2, -0.13, f"{(os_high_risk>=t).sum()}", transform=ax[5].transData, fontsize=11, verticalalignment='top', color=colors_groups[top_risk_high])
+            ax[5].text(t-2, -0.13, f"{(os_high_risk>=t).sum()}", transform=ax[5].transData, fontsize=11, verticalalignment='top', color="gray" if "gray" in cmap else colors_groups[top_risk_high])
 
     ### Log-rank test
     OS_STATS.extend([(st, ovs) for st, ovs in zip(status_low_risk==1, os_low_risk)])
