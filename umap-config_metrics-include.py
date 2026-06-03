@@ -357,7 +357,7 @@ raw_results = list(tqdm(
             daysXmonth,
             random_seed
         )
-        for k, metrics_subset in enumerate(subset, start=1)
+        for k, metrics_subset in enumerate(subset, start=Ncs0)
     ),
     total=len(subset),
     desc="Metric subsets",
