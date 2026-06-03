@@ -402,7 +402,7 @@ df_test.to_csv( f"{out_dir}/HCPEX__results-test_{Ncs0}-{Ncs1}.csv",  sep=",", in
 df_train.to_csv(f"{out_dir}/HCPEX__results-train_{Ncs0}-{Ncs1}.csv", sep=",", index=False)
 
 import json
-with open(f"{out_dir}/HCPEX__key-metrics.json", 'w', encoding='utf-8') as ff:
+with open(f"{out_dir}/HCPEX__key-metrics_{Ncs0}-{Ncs1}.json", 'w', encoding='utf-8') as ff:
     json.dump(key_metrics, ff, ensure_ascii=False, indent=4)
 
 print(f"Saved train results → {out_dir}/HCPEX__results-train_{Ncs0}-{Ncs1}.csv")
