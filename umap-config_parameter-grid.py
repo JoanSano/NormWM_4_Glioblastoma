@@ -329,8 +329,10 @@ def run_combination(k, combination, data_train, data_test, mask_train, os_train,
 
 Ncs0 = int(sys.argv[1])
 Ncs1 = int(sys.argv[2])
-subset = combinations[Ncs0:Ncs1]
+Ncs1   = None if Ncs1==-1 else Ncs1
 njobs = int(sys.argv[3])
+
+subset = combinations[Ncs0:Ncs1]
 print(f"Running combinations from {Ncs0} to {Ncs1} (total: {len(subset)}) with {njobs} parallel jobs...")
 
 raw_results = list(tqdm(
@@ -344,7 +346,7 @@ raw_results = list(tqdm(
             daysXmonth,
             random_seed
         )
-        for k, combination in enumerate(subset, start=1)
+        for k, combination in enumerate(subset, start=Ncs0)
     ),
     total=len(subset),
     desc="Combinations",
@@ -370,13 +372,28 @@ if failed:
     for k, name, status in failed:
         print(f"  [{k}] {name} — {status}")
 
+Ncs1   = 'end' if Ncs1 is None else Ncs1
 os.makedirs(f"{RESULTS}/UMAP-stats", exist_ok=True)
+os.makedirs(f"{RESULTS}/UMAP-stats/Config-outcomes", exist_ok=True)
 
 df_test = pd.DataFrame.from_dict(results_test, orient="index")
-df_test.to_csv(f"{RESULTS}/UMAP-stats/HCPEX__results-test_{Ncs0}-{Ncs1}.csv", sep=",", index=False)
+df_test.to_csv(f"{RESULTS}/UMAP-stats/Config-outcomes/HCPEX__results-test_{Ncs0}-{Ncs1}.csv", sep=",", index=False)
 
 df_train = pd.DataFrame.from_dict(results_train, orient="index")
-df_train.to_csv(f"{RESULTS}/UMAP-stats/HCPEX__results_train_{Ncs0}-{Ncs1}.csv", sep=",", index=False)
+df_train.to_csv(f"{RESULTS}/UMAP-stats/Config-outcomes/HCPEX__results_train_{Ncs0}-{Ncs1}.csv", sep=",", index=False)
 
-print(f"Saved {len(df_train)} train results → {RESULTS}/UMAP-stats/results_train.csv")
-print(f"Saved {len(df_test)}  test  results → {RESULTS}/UMAP-stats/results_test.csv")
+print(f"Saved {len(df_train)} train results → {RESULTS}/UMAP-stats/Config-outcomes/results_train.csv")
+print(f"Saved {len(df_test)}  test  results → {RESULTS}/UMAP-stats/Config-outcomes/results_test.csv")
+
+combinations_key = {}
+for k, combination in tqdm(enumerate(subset, start=Ncs0), desc="Prepping combination key dicts"):
+    combinations_key[k] = {
+        "ALGORITHM": combination["algorithm_name"],
+        "NAME": combination["umap_configuration"]
+    }
+
+import json
+with open(f"{RESULTS}/UMAP-stats/Config-outcomes/HCPEX__key-combinations_{Ncs0}-{Ncs1}.json", 'w', encoding='utf-8') as ff:
+    json.dump(combinations_key, ff, ensure_ascii=False, indent=4)
+
+print(f"Saved combinations keys → {RESULTS}/UMAP-stats/Config-outcomes/HCPEX__key-combinations_{Ncs0}-{Ncs1}.json")
