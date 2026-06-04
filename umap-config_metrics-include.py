@@ -338,7 +338,7 @@ njobs  = int(sys.argv[3])
 subset = combinations[Ncs0:Ncs1]
 print(f"Running combinations from index {Ncs0} to {Ncs1} "
       f"(total: {len(subset)}) with {njobs} parallel jobs...")
-#print(Ncs0, Ncs1, combinations[0:None])
+
 raw_results = list(tqdm(
     Parallel(n_jobs=njobs, backend="loky", return_as="generator")(
         delayed(run_metric_subset)(
