@@ -61,18 +61,22 @@ def sig_marker(p):
 
 ####################################################################################################################################################################
 ## General processing
-## Example command --> python TDIndices_stats.py /home/joan/Desktop/PROJECTS/Glioblastomas/RESULTS-GBM_4-cohorts_TD-Tissues/ Tract-density_Tissue-types data-clinical_TD-tissues_4-cohorts.csv --format pdf
+## Example command --> python TDIndices_stats.py /home/joan/Desktop/PROJECTS/Glioblastomas/RESULTS-GBM_4-cohorts_Tissues/ Tract-density_Tissue-types data-clinical_TD-tissues_4-cohorts.csv --format pdf --cohort -1
 ####################################################################################################################################################################
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the directory where the TDI and survival data are stored")
 parser.add_argument("results_folder", type=str, help="Name of the folder where the results will be stored")
 parser.add_argument("data", type=str, help="Name of the CSV file with the data")
 parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
+parser.add_argument("--cohort", type=int, default=-1, choices=[-1,0,1,2,3], help="{-1: all cohorts, 0: UCSF, 1: UPENN, 2: TCGA, 3: RHUH}")
 args = parser.parse_args()
 
 results_folder = args.results_folder
 os.makedirs(os.path.join(args.path, results_folder), exist_ok=True)
-data_o = pd.read_csv(os.path.join(args.path, args.data))
+try:
+    data_o = pd.read_csv(os.path.join(args.path, args.data))
+except:
+    raise FileNotFoundError("Please copy the database inside the directory you will be working with and has been created.")
 
 daysXmonth = 365/12 
 ip, dp = 10, 0.1
@@ -84,6 +88,12 @@ n_perms = 5000 # Permutation of Cox Prop Hazard models
 months = np.array([6,12,18,24,30,36,42,48])
 nrows, ncols = 1, 5
 figsize = (5*ncols, 6*nrows)
+
+# Select cohort if applicable
+if args.cohort in range(4):
+    data_o = data_o.loc[
+        data_o["cohort"]==args.cohort
+    ].copy()
 
 TDMaps = data_o[
     [
