@@ -102,7 +102,8 @@ TDMaps = data_o[
         "Core lesion TDMap",
         "Non-enhancing lesion TDMap",
         "Enhancing lesion TDMap",
-        "Core+Enhancing lesion TDMap"
+        "Core+Enhancing lesion TDMap",
+        "status"
     ]
 ].copy().rename(
     columns={
@@ -111,10 +112,16 @@ TDMaps = data_o[
         "Core lesion TDMap": "C.L-TDI",
         "Non-enhancing lesion TDMap": "NE.L-TDI",
         "Enhancing lesion TDMap": "E.L-TDI",
-        "Core+Enhancing lesion TDMap": "C+E.L-TDI"
+        "Core+Enhancing lesion TDMap": "C+E.L-TDI",
+        "status": "status"
         }
     )
-life = data_o["status"].values
+
+# To study the common subset of patients with complete segmentations
+#TDMaps = TDMaps.dropna(subset=["C.L-TDI"])
+
+life = TDMaps["status"].values
+TDMaps.drop(columns=["status"], inplace=True)
 
 ####################################################################################################################################################################
 ## General numbers
