@@ -118,7 +118,7 @@ TDMaps = data_o[
     )
 
 # To study the common subset of patients with complete segmentations
-#TDMaps = TDMaps.dropna(subset=["C.L-TDI"])
+TDMaps = TDMaps.dropna(subset=["W.L-TDI", "C.L-TDI", "NE.L-TDI", "E.L-TDI", "C+E.L-TDI"])
 
 life = TDMaps["status"].values
 TDMaps.drop(columns=["status"], inplace=True)
