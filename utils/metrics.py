@@ -481,7 +481,7 @@ def repeated_validation(
 
     return results
 
-def print_model_summary(label, model, cindex_train, ci_boot, ci_perm):
+def print_model_summary(label, model, cindex_train, ci_boot, ci_perm, uno=None):
     """Pretty-print log-HRs, HRs, p-values and CIs for one model."""
     print(f"\n{'═'*60}")
     print(f"  {label}")
@@ -506,6 +506,8 @@ def print_model_summary(label, model, cindex_train, ci_boot, ci_perm):
         print(out.to_string())
 
     print(f"\n  Train C-index : {cindex_train:.4f}")
+    if uno is not None:
+        print(f"  Train Uno's C-index : {uno:.4f}")
     print(f"  Bootstrap C-index : {ci_boot[0]:.4f}  "
         f"(95% CI {ci_boot[1]:.4f} – {ci_boot[2]:.4f})")
     print(f"  C-index permutation p-value : {ci_perm[0]:.6f}")

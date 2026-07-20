@@ -8,38 +8,22 @@ import json
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.patches as patches
-from matplotlib.colors import to_rgba
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib as mpl
 
 import seaborn as sns
 
-import scipy
 from scipy.stats import mannwhitneyu, linregress, pearsonr, PermutationMethod, BootstrapMethod
 
 from statsmodels.stats.multitest import multipletests, fdrcorrection
 
 from sksurv.nonparametric import kaplan_meier_estimator
 from sksurv.compare import compare_survival
-from sksurv.linear_model import CoxPHSurvivalAnalysis
-from sksurv.metrics import cumulative_dynamic_auc
-from sksurv.ensemble import RandomSurvivalForest
-
-from sklearn.feature_selection import SelectKBest
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import (
-    GridSearchCV, KFold, RepeatedKFold, RepeatedStratifiedKFold,
-    cross_val_score, cross_validate, cross_val_predict, permutation_test_score
-)
-from sklearn.svm import SVC, LinearSVC
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, roc_auc_score, roc_curve
+from sksurv.metrics import concordance_index_ipcw
 
 from lifelines import CoxPHFitter
-from lifelines.utils import concordance_index
 
-from utils.statistics import DeLong_Test, benjamini_bogomolov_procedure, bootstrap_median_os_difference, bootstrap_cindex, permutation_cindex
+from utils.statistics import benjamini_bogomolov_procedure, bootstrap_median_os_difference, bootstrap_cindex, permutation_cindex, to_structured_array
 from utils.metrics import compute_quantile_OS, print_model_summary
 
 def pvalue_to_text(p, nd=4):
@@ -118,7 +102,7 @@ TDMaps = data_o[
     )
 
 # To study the common subset of patients with complete segmentations
-TDMaps = TDMaps.dropna(subset=["W.L-TDI", "C.L-TDI", "NE.L-TDI", "E.L-TDI", "C+E.L-TDI"])
+# TDMaps = TDMaps.dropna(subset=["W.L-TDI", "C.L-TDI", "NE.L-TDI", "E.L-TDI", "C+E.L-TDI"])
 
 life = TDMaps["status"].values
 TDMaps.drop(columns=["status"], inplace=True)
@@ -943,9 +927,14 @@ for i in range(1,len(TDMaps.columns)-1):
     data = TDMaps[features].copy()
     data.dropna(inplace=True)
 
+    OS_structured = to_structured_array(data, "status", "OS")
+
     cph = CoxPHFitter(baseline_estimation_method="breslow")
     cph.fit(data, duration_col="OS", event_col="status")
     cindex_train = cph.score(data, scoring_method="concordance_index")
+    
+    risk_full = cph.predict_partial_hazard(data).values.flatten()
+    uno_cindex = concordance_index_ipcw(OS_structured, OS_structured, risk_full)[0]
 
     ll = cph.log_likelihood_
     ci_boot, _ = bootstrap_cindex(cph, data, features, status="status", survival="OS", n_bootstrap=n_resamples, alpha_CI=0.05, seed=None)
@@ -953,7 +942,7 @@ for i in range(1,len(TDMaps.columns)-1):
     ps_HR.append(cph.summary["p"].values[0])   
     ps_Cs.append(ci_perm[0])                  
 
-    print_model_summary(f"Tissue: {TDMaps.columns[i]} (N={len(data)})", cph, cindex_train, ci_boot, ci_perm)
+    print_model_summary(f"Tissue: {TDMaps.columns[i]} (N={len(data)})", cph, cindex_train, ci_boot, ci_perm, uno=uno_cindex)
 
     HRs.append(np.exp(cph.summary["coef"].values[0]))
     HR_lows.append(np.exp(cph.summary["coef lower 95%"].values[0]))

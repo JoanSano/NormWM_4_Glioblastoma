@@ -405,3 +405,10 @@ def llr_pvalue(ll_full, ll_reduced, df_diff):
     """Likelihood-ratio test p-value. df_diff = difference in free parameters."""
     lr_stat = 2 * (ll_full - ll_reduced)
     return chi2.sf(lr_stat, df=df_diff)
+
+def to_structured_array(data, event_col, duration_col):
+    """Convert a dataframe into the structured array sksurv expects."""
+    return np.array(
+        [(bool(e), t) for e, t in zip(data[event_col], data[duration_col])],
+        dtype=[("event", bool), ("time", float)]
+    )
