@@ -8,38 +8,21 @@ import json
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.patches as patches
-from matplotlib.colors import to_rgba
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import matplotlib as mpl
 
 import seaborn as sns
 
-import scipy
 from scipy.stats import mannwhitneyu, linregress, pearsonr, PermutationMethod, BootstrapMethod
 
 from statsmodels.stats.multitest import multipletests, fdrcorrection
 
 from sksurv.nonparametric import kaplan_meier_estimator
 from sksurv.compare import compare_survival
-from sksurv.linear_model import CoxPHSurvivalAnalysis
-from sksurv.metrics import cumulative_dynamic_auc
-from sksurv.ensemble import RandomSurvivalForest
-
-from sklearn.feature_selection import SelectKBest
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import (
-    GridSearchCV, KFold, RepeatedKFold, RepeatedStratifiedKFold,
-    cross_val_score, cross_validate, cross_val_predict, permutation_test_score
-)
-from sklearn.svm import SVC, LinearSVC
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix, roc_auc_score, roc_curve
 
 from lifelines import CoxPHFitter
-from lifelines.utils import concordance_index
 
-from utils.statistics import DeLong_Test, benjamini_bogomolov_procedure, bootstrap_median_os_difference, bootstrap_cindex, permutation_cindex
+from utils.statistics import benjamini_bogomolov_procedure, bootstrap_median_os_difference, bootstrap_cindex, permutation_cindex
 from utils.metrics import compute_quantile_OS, print_model_summary
 
 def pvalue_to_text(p, nd=4):
@@ -68,7 +51,7 @@ parser.add_argument("path", type=str, help="Path to the directory where the TDI 
 parser.add_argument("results_folder", type=str, help="Name of the folder where the results will be stored")
 parser.add_argument("data", type=str, help="Name of the CSV file with the data")
 parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
-parser.add_argument("--cohort", type=int, default=-1, choices=[-1,0,1,2,3], help="{-1: all cohorts, 0: UCSF, 1: UPENN, 2: TCGA, 3: RHUH}")
+parser.add_argument("--cohort", type=int, default=-1, choices=[-1,0,1,2,3,4], help="{-1: all cohorts, 0: UCSF, 1: UPENN, 2: TCGA, 3: RHUH, 4: UPENN + TCGA + RHUH}")
 args = parser.parse_args()
 
 results_folder = args.results_folder
@@ -94,10 +77,18 @@ if args.cohort in range(4):
     data_o = data_o.loc[
         data_o["cohort"]==args.cohort
     ].copy()
+    duration_col = "OS (days) - corrected"
+elif args.cohort==4: # UPENN + TCGA + RHUH
+    data_o = data_o.loc[
+        data_o["cohort"]>0
+    ].copy()
+    duration_col = "OS (days)"
+else:
+    raise ValueError("Unknown cohort naming: ")
 
 TDMaps = data_o[
     [
-        "OS (days) - corrected",
+        duration_col,
         "Whole TDMap",
         "Core TDMap",
         "Non-enhancing TDMap",
@@ -106,7 +97,7 @@ TDMaps = data_o[
     ]
 ].copy().rename(
     columns={
-        "OS (days) - corrected": "OS",
+        duration_col: "OS",
         "Whole TDMap": "W.TDI",
         "Core TDMap": "C.TDI",
         "Non-enhancing TDMap": "NE.TDI",
