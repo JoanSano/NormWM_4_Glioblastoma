@@ -9,7 +9,7 @@ else
     MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/${CONTRAST}_0.5mm_brain"
 fi
 MNI_TEMPLATE_mask="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/T1_0.5mm_brain_mask.nii.gz"
-MNI_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_LUMIERE-GBM_v1-13122022/LUMIERE-GBM-v1_MNI-ICBM-2009b-NLIN-ASYM"
+MNI_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_LUMIERE-GBM_v1-13122022/LUMIERE-GBM_MNI-ICBM-2009b-NLIN-ASYM"
 SEGMENTATION_MODEL="Manual-segmentation/native" #"DeepBraTumIA-segmentation/native/segmentation"
 WEEK="week-000*" #-1
 if [[ -d "$MNI_DIR" ]]; then
