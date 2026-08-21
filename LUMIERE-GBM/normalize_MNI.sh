@@ -10,15 +10,15 @@ else
 fi
 MNI_TEMPLATE_mask="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/T1_0.5mm_brain_mask.nii.gz"
 MNI_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_LUMIERE-GBM_v1-13122022/LUMIERE-GBM-v1_MNI-ICBM-2009b-NLIN-ASYM"
-SEGMENTATION_MODEL="DeepBraTumIA-segmentation/native/segmentation"
-WEEK="week-000*"
+SEGMENTATION_MODEL="Manual-segmentation/native" #"DeepBraTumIA-segmentation/native/segmentation"
+WEEK="week-000*" #-1
 if [[ -d "$MNI_DIR" ]]; then
     echo "MNI directory already exists"
 else
     mkdir "$MNI_DIR"
 fi
 
-N=4
+N=14
 
 images=()
 # Parse the options using getopts
@@ -100,7 +100,7 @@ for subject in "$BASE_DIR"/LUMIERE-GBM_data-raw_V1/*; do
                     else
                         for img in "${images[@]}"; do
                             if [ "$img" = "mask" ]; then
-                                moving_IMAGE=$(find "$wk/$SEGMENTATION_MODEL" -name "${CONTRAST,,}_seg_mask.nii.gz")
+                                moving_IMAGE=$(find "$wk/$SEGMENTATION_MODEL" -name "${CONTRAST,,}_seg_mask.nii.gz" 2>/dev/null)
                             else
                                 moving_IMAGE=$(find "$week" -name "*$img.nii.gz")
                             fi
@@ -108,6 +108,11 @@ for subject in "$BASE_DIR"/LUMIERE-GBM_data-raw_V1/*; do
                             OUTPUT_regis=("${OUTPUT_regis%.*}")
                             OUTPUT_regis=("${OUTPUT_regis%.*}")
                             
+                            if [ -z "$moving_IMAGE" ]; then
+                                echo "  ${wk}: No ${img} found likely due to <${SEGMENTATION_MODEL}> outputs"
+                                continue
+                            fi
+
                             echo "  ${wk}: Applying the warping to ${img}"
 
                             antsApplyTransforms -d 3 \
