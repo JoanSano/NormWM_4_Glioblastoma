@@ -1,25 +1,20 @@
 #!/bin/bash
 
 # Default values
-IDH=WT
 COMPARTMENT=1
 N=1
 
 # Usage function
 usage() {
-  echo "Usage: $0 [-i idh] [-c compartment] [-n n] [-s s]"
-  echo "  -i IDH         : Specify the IDH1 statatus to analyze (default: WT; options: WT, MUT, or NOSNEC)"
+  echo "Usage: $0 [-c compartment] [-n n] [-s s]"
   echo "  -c COMPARTMENT : Specify the label of the compartment to use (default: 1 for contrast-enhancing)"
   echo "  -n N           : Specify the number of subjects to parallelize (default: 1, options: 1, ..., N)"
   exit 1
 }
 
 # Parse command-line options
-while getopts ":i:c:n:h" opt; do
+while getopts ":c:n:h" opt; do
   case ${opt} in
-    i)
-      IDH=$OPTARG
-      ;;
     c)
       COMPARTMENT=$OPTARG
       ;;
@@ -43,7 +38,6 @@ done
 # Define base paths
 MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_LUMIERE-GBM_v1-13122022"
 DATA_DIR="${MAIN_DIR}/LUMIERE-GBM_data-raw_v2"
-DESTINATION_MAPS="${MAIN_DIR}/TDMaps_IDH1-${IDH}"
 EOR="${MAIN_DIR}/data/LUMIERE_Extent-of-Resection.csv"
 SEGMENTATION_MODEL="DeepBraTumIA-segmentation/native/segmentation"
 CONTRAST="CT1"
