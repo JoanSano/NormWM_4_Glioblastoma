@@ -95,12 +95,12 @@ for lesion in $LESION_DIR/IDH1-$IDH/*; do
         EH="${SUBJECT_DIR}/masks/${SUBJECT}_tissue-enhancing.nii.gz"
         CREH="${SUBJECT_DIR}/masks/${SUBJECT}_tissue-core+enhancing.nii.gz"
 
-        # Masking the tumor tissues
+        # Masking the tumor tissues, beware of the exact labeling of each compartment
         echo " INFO ${SUBJECT}: Masking the tumor tissues"
         if [[ ! -f $WT ]]; then fslmaths $lesion -bin $WT; fi
-        if [[ ! -f $CR ]]; then fslmaths $lesion -thr 1 -uthr 1 -bin $CR; fi
-        if [[ ! -f $NE ]]; then fslmaths $lesion -thr 2 -uthr 2 -bin $NE; fi
-        if [[ ! -f $EH ]]; then fslmaths $lesion -thr 3 -uthr 3 -bin $EH; fi
+        if [[ ! -f $CR ]]; then fslmaths $lesion -thr 2 -uthr 2 -bin $CR; fi
+        if [[ ! -f $NE ]]; then fslmaths $lesion -thr 3 -uthr 3 -bin $NE; fi
+        if [[ ! -f $EH ]]; then fslmaths $lesion -thr 1 -uthr 1 -bin $EH; fi
         if [[ ! -f $CREH ]]; then fslmaths $CR -add $EH -bin $CREH; fi
         
         # Execute Python script

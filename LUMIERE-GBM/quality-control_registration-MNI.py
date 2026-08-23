@@ -247,11 +247,11 @@ for i, s in enumerate(subjects):
             if not os.path.exists(f"{os.path.join(figures_dir, s)}/{m}_registration.pdf"):
                 plot_registration(T1, nifti, iso_levels[m], os.path.join(figures_dir, s), m, m+": "+s, Nslices=15)
 
-            if ("seg" in m) or ("mask" in m):
+            if ("seg" in m) or ("mask" in m): # Beware of the exact labeling of each compartment
                 whole_tumor += np.where(nifti.get_fdata()>=1, 1, 0)
-                enhancing_tumor += np.where(nifti.get_fdata()==4, 1, 0)
-                nonenhancing_tumor += np.where(nifti.get_fdata()==2, 1, 0)
-                core_tumor += np.where(nifti.get_fdata()==1, 1, 0)
+                enhancing_tumor += np.where(nifti.get_fdata()==1, 1, 0)
+                nonenhancing_tumor += np.where(nifti.get_fdata()==3, 1, 0)
+                core_tumor += np.where(nifti.get_fdata()==2, 1, 0)
             
             """ if m=="T1_bias":
                 # Metrics between the MNI brain mask and the registered brain
