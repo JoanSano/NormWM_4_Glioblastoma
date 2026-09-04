@@ -95,75 +95,76 @@ def topological_risk_concordance_index(
     rng = np.random.default_rng(random_state)
     features = [survival, status, risk]
 
-    ## Cox model on the training set
+    ## Cox model on the training set, fit only to report hazard ratio / log-likelihood
     cph = CoxPHFitter()
     cph.fit(data_train[features], duration_col=survival, event_col=status)
-    cindex_train = cph.score(       # Compute C-index of the training set
-        data_train[features], 
-        scoring_method="concordance_index"
-    )
     llr = cph.log_likelihood_       # Log-likelihood ratio
     hr = cph.hazard_ratios_         # Hazard ratio
     statistics["training cohort(s)"]["cox model"] = {
-        "C-index": cindex_train, 
-        "Log-likelihood ratio": llr, 
+        "Log-likelihood ratio": llr,
         "Hazard ratio and p-value": (hr.values[0], cph.summary['p'].values[0])
     }
 
-    # Compute C-index of the testing set
-    test_pred = cph.predict_partial_hazard(data_test[features])
+    ## C-index computed directly from the topological risk scores (no Cox model)
+    risk_train = data_train[risk].values
+    risk_test = data_test[risk].values
+
+    cindex_train = concordance_index(
+        data_train[survival],
+        -risk_train,   # negative because higher risk = worse survival
+        data_train[status]
+    )
+    statistics["training cohort(s)"]["C-index"] = {"Harrell's C": cindex_train}
+
     cindex_test = concordance_index(
         data_test[survival],
-        -test_pred.values.ravel(),   # negative because higher hazard = worse survival
+        -risk_test,
         data_test[status]
     )
-    statistics["testing cohort(s)"]["cox model"] = {"C-index": cindex_test}
+    statistics["testing cohort(s)"]["C-index"] = {"Harrell's C": cindex_test}
 
     ## Permutation testing
-    train_null = []
-    test_null = []
-    for ip in tqdm(range(n_permutations), desc="Permutation procedure"):
-        # Training null C-index by training on permuted data
-        perm_idx = rng.permutation(len(data_train))
-        perm_train = data_train.copy()
-        perm_train[survival] = data_train[survival].values[perm_idx]
-        perm_train[status] = data_train[status].values[perm_idx]
-        cph_perm = CoxPHFitter()
-        cph_perm.fit(perm_train[features], duration_col=survival, event_col=status)
-        train_null.append(
-            cph_perm.score(perm_train[features], scoring_method="concordance_index")
-        )
-
-        # Testing null C-index permuting the test data and using the "true" model
-        perm_idx = rng.permutation(len(data_test))
-        perm_test = data_test.copy()
-        perm_test[survival] = data_test[survival].values[perm_idx]
-        perm_test[status] = data_test[status].values[perm_idx]
-        test_null.append(
-            concordance_index(
-                perm_test[survival],
-                -test_pred.values.ravel(),
-                perm_test[status]
+    if n_permutations is not None and n_permutations > 0:
+        train_null = []
+        test_null = []
+        for ip in tqdm(range(n_permutations), desc="Permutation procedure"):
+            # Training null C-index: permute outcomes, keep the risk scores fixed
+            perm_idx = rng.permutation(len(data_train))
+            train_null.append(
+                concordance_index(
+                    data_train[survival].values[perm_idx],
+                    -risk_train,
+                    data_train[status].values[perm_idx]
+                )
             )
-        )
-    
-    p_train = permutation_p_value(cindex_train, train_null)
-    statistics["training cohort(s)"]["cox model"]["C-index p-value (perm)"] = p_train
 
-    p_test = permutation_p_value(cindex_test, test_null)
-    statistics["testing cohort(s)"]["cox model"]["C-index p-value (perm)"] = p_test
+            # Testing null C-index: permute outcomes, keep the risk scores fixed
+            perm_idx = rng.permutation(len(data_test))
+            test_null.append(
+                concordance_index(
+                    data_test[survival].values[perm_idx],
+                    -risk_test,
+                    data_test[status].values[perm_idx]
+                )
+            )
+
+        p_train = permutation_p_value(cindex_train, train_null)
+        statistics["training cohort(s)"]["C-index"]["p-value (perm)"] = p_train
+
+        p_test = permutation_p_value(cindex_test, test_null)
+        statistics["testing cohort(s)"]["C-index"]["p-value (perm)"] = p_test
 
     ## Confidence intervals with bootstrapping
     if n_bootstrap is not None and n_bootstrap > 0:
         cindex_boot = []
         for ib in tqdm(range(n_bootstrap), desc="Bootsrapping procedure"):
             idx = rng.integers(0, len(data_test), len(data_test))
-            cidx = concordance_index(data_test[survival].values[idx], -test_pred.values[idx], data_test[status].values[idx])
+            cidx = concordance_index(data_test[survival].values[idx], -risk_test[idx], data_test[status].values[idx])
             cindex_boot.append(cidx)
         cindex_boot = np.array(cindex_boot)
         lower = np.percentile(cindex_boot, 100 * (alpha_CI / 2))
         upper = np.percentile(cindex_boot, 100 * (1 - alpha_CI / 2))
-        statistics["testing cohort(s)"]["cox model"]["C-index CI"] = (lower, upper)
+        statistics["testing cohort(s)"]["C-index"]["CI"] = (lower, upper)
 
     return statistics
 
