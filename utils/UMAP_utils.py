@@ -79,6 +79,7 @@ def plot_umap_outcome(
     stats["testing cohort(s)"]["kaplan-meier"] = {}
 
     groups = np.unique(training_dataframe[risk].values)
+    medians = {"train": {}, "test": {}}
 
     for tr in range(len(groups)): 
         ##############################################
@@ -102,6 +103,7 @@ def plot_umap_outcome(
         
         yerr = np.array([[med - q1], [q3 - med]])
         stats["training cohort(s)"]["topological risk"][tr] = [med, q1, q3]
+        medians["train"][tr] = [med, q1, q3]
 
         if plot:
             ax[0].barh(
@@ -134,6 +136,7 @@ def plot_umap_outcome(
 
         yerr = np.array([[med - q1], [q3 - med]])
         stats["testing cohort(s)"]["topological risk"][tr] = [med, q1, q3]
+        medians["test"][tr] = [med, q1, q3]
 
         if plot:
             ax[2].barh(
@@ -253,6 +256,7 @@ def plot_umap_outcome(
     if plot:
         ax[4].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
         ax[4].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low], edgecolor="black" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
+        ax[4].vlines(x=medians["train"][top_risk_low][0], ymin=0, ymax=0.5, colors="gray", linestyles=":", linewidth=0.8, alpha=0.75,zorder=1)
 
     ## High topological risk
     top_risk_high = np.max(groups)
@@ -271,7 +275,8 @@ def plot_umap_outcome(
     if plot:
         ax[4].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color="gray" if "gray" in cmap else colors_groups[top_risk_high], label="High topological risk", linestyle="dashed" if "gray" in cmap else "-")
         ax[4].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high], edgecolor="gray" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
-    
+        ax[4].vlines(x=medians["train"][top_risk_high][0], ymin=0, ymax=0.5, colors="gray", linestyles=":", linewidth=0.8, alpha=0.75,zorder=1)
+
         ### Censoring times
         for t_low, t_high in zip(os_low_risk[status_low_risk==0], os_high_risk[status_high_risk==0]): # Censoring times
             ax[4].plot(time_low_risk[time_low_risk==t_low], survival_prob_low_risk[time_low_risk==t_low], "|", color=colors_groups[top_risk_low])
@@ -292,6 +297,7 @@ def plot_umap_outcome(
     chisquared, p_val, _, _ = compare_survival(OS_STATS, GROUP_STATS, return_stats=True)
     stats["training cohort(s)"]["kaplan-meier"] = {"chi-squared": chisquared, "p-value": p_val}
     if plot:
+        ax[4].hlines(y=0.5, xmin=-5, xmax=max([medians["train"][top_risk_low][0], medians["train"][top_risk_high][0]]), colors="gray", linestyles=":", linewidth=0.8, alpha=0.75, zorder=1)
         tx = "<0.0001" if p_val<0.0001 else round(p_val,4)
         ax[4].text(0.85, 0.85, r"$\chi^2 =$"+f"{round(chisquared,4)} \np = {tx}", transform=ax[4].transAxes, 
                             fontsize=10, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val<=0.05 else "black")
@@ -334,6 +340,7 @@ def plot_umap_outcome(
     if plot:
         ax[5].step(time_low_risk, survival_prob_low_risk, where="post",  linewidth=2, color=colors_groups[top_risk_low], label="Low topological risk")
         ax[5].fill_between(time_low_risk, conf_int_low_risk[0], conf_int_low_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_low], edgecolor="black" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
+        ax[5].vlines(x=medians["test"][top_risk_low][0], ymin=0, ymax=0.5, colors="gray", linestyles=":", linewidth=0.8, alpha=0.75,zorder=1)
 
     ## High topological risk
     top_risk_high = np.max(groups)
@@ -352,7 +359,8 @@ def plot_umap_outcome(
     if plot:
         ax[5].step(time_high_risk, survival_prob_high_risk, where="post",  linewidth=2, color="gray" if "gray" in cmap else colors_groups[top_risk_high], label="High topological risk", linestyle="dashed" if "gray" in cmap else "-")
         ax[5].fill_between(time_high_risk, conf_int_high_risk[0], conf_int_high_risk[1], alpha=0.10, step="post", color=colors_groups[top_risk_high], edgecolor="gray" if "gray" in cmap else None, linewidth=2 if "gray" in cmap else None)
-        
+        ax[5].vlines(x=medians["test"][top_risk_high][0], ymin=0, ymax=0.5, colors="gray", linestyles=":", linewidth=0.8, alpha=0.75,zorder=1)
+
         ### Censoring times
         for t_low, t_high in zip(os_low_risk[status_low_risk==0], os_high_risk[status_high_risk==0]): # Censoring times
             ax[5].plot(time_low_risk[time_low_risk==t_low], survival_prob_low_risk[time_low_risk==t_low], "|", color=colors_groups[top_risk_low])
@@ -373,6 +381,7 @@ def plot_umap_outcome(
     chisquared, p_val, _, _ = compare_survival(OS_STATS, GROUP_STATS, return_stats=True)
     stats["testing cohort(s)"]["kaplan-meier"] = {"chi-squared": chisquared, "p-value": p_val}
     if plot:
+        ax[5].hlines(y=0.5, xmin=-5, xmax=max([medians["test"][top_risk_low][0], medians["test"][top_risk_high][0]]), colors="gray", linestyles=":", linewidth=0.8, alpha=0.75, zorder=1)
         tx = "<0.0001" if p_val<0.0001 else round(p_val,4)
         ax[5].text(0.85, 0.85, r"$\chi^2 =$"+f"{round(chisquared,4)} \np = {tx}", transform=ax[5].transAxes, 
                             fontsize=10, verticalalignment='top', bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val<=0.05 else "black")
