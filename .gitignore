@@ -220,3 +220,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Work in progress: connectomes, network/graph metrics and UMAP analysis
+# ---------------------------------------------------------------------------
+
+# Connectome construction (per-cohort)
+Connectomes.sh
+
+# Network / graph metrics
+Graph-metrics.sh
+Network-metrics.py
+Graph-metrics_models.ipynb
+
+# UMAP analysis
+umap-config_metrics-include.py
+umap-config_parameter-grid.py
+UMAP-TRS.ipynb
+UMAP-TRS_patent-results.ipynb
+utils/UMAP_utils.py
