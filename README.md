@@ -57,8 +57,9 @@ map**. Two indices are then extracted per compartment:
 | **TDI** | Mean normative streamline density *within* the compartment mask | Local white matter density of the tissue the tumour occupies |
 | **L-TDI** | Mean density of the map formed by the streamlines the compartment *intercepts* | Whole-brain disruption footprint — the non-local marker |
 
-Both are thresholded at a minimum streamline count per voxel (`-s`, default 10) to
-suppress spurious tractography. `morphology-extraction.py` records compartment volumes in
+Both are thresholded at a minimum streamline count per voxel (`-s`, default 0). 
+
+`morphology-extraction.py` records compartment volumes in
 parallel, so volume and L-TDI can be compared head to head.
 
 **3. Database assembly** — `createDatabase.ipynb`
@@ -161,7 +162,7 @@ python quality-control_registration-MNI.py
 
 # 2. Tract-density maps and indices
 #    -g grade  -n parallel subjects  -s min. streamline density  -k keep .tck files
-./TDMaps.sh -g IV -n 4 -s 10 -k 0
+./TDMaps.sh -g IV -n 4 -s 0 -k 0
 ```
 
 Pooled statistics, from the repository root. Each script takes a results directory, an
@@ -203,7 +204,7 @@ with the MONAI BraTS `SegResNet` bundle.
 
 ## Citation
 
-If you use this code, please cite the two methodological papers.
+If you use this code, consider the two methodological papers.
 
 **The L-TDI — definition, validation and survival stratification:**
 
@@ -336,5 +337,7 @@ tracts (XTRACT) and cortical lobes (USCLobes / BCI-DNI).
 
 ## Contact
 
-Questions, problems and reuse: open an issue, or contact
-[Joan Falcó-Roget](https://github.com/JoanSano).
+Questions, problems and reuse: open an issue, contact
+[Joan Falcó-Roget](https://github.com/JoanSano), or
+send an email to the corresponding addresses in our 
+published work.
