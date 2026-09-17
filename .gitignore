@@ -239,3 +239,8 @@ umap-config_parameter-grid.py
 UMAP-TRS.ipynb
 UMAP-TRS_patent-results.ipynb
 utils/UMAP_utils.py
+
+# ---------------------------------------------------------------------------
+# Superseded by createDatabase.py -- kept locally, not shared
+# ---------------------------------------------------------------------------
+createDatabase.ipynb

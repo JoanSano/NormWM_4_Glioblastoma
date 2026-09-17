@@ -24,13 +24,16 @@ nibabel>=5.3
 nilearn>=0.11
 
 # --- Statistics and survival analysis --------------------------------------
+# scikit-survival and lifelines are also what createDatabase.py uses to estimate
+# and remove the site effect on survival times.
 scikit-learn>=1.6
 statsmodels>=0.14
 scikit-survival>=0.28
 lifelines>=0.30
 
 # --- Jupyter ---------------------------------------------------------------
-# Required to run the notebooks. With VSCode this is usually installed for you.
+# Required to run the notebooks; the .py entry points do not need it. With VSCode
+# it is usually installed for you.
 ipykernel
 
 # ---------------------------------------------------------------------------

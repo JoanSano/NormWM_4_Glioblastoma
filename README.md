@@ -62,11 +62,21 @@ Both are thresholded at a minimum streamline count per voxel (`-s`, default 0).
 `morphology-extraction.py` records compartment volumes in
 parallel, so volume and L-TDI can be compared head to head.
 
-**3. Database assembly** — `createDatabase.ipynb`
+**3. Database assembly** — `createDatabase.py`
 
 Harmonises the per-cohort outputs with clinical and molecular variables (age, sex, KPS,
 extent of resection, MGMT, IDH, overall survival and censoring) into the pooled
-`data-clinical_*` tables that every downstream analysis consumes.
+`data-clinical_*` tables that every downstream analysis consumes. Each cohort reports
+these variables under its own schema and coding, so the script applies the per-cohort
+inclusion criteria (IDH-wildtype, grade IV, treatment-naive, known survival), converts
+survival to days, and recodes sex, MGMT and extent of resection onto common integer keys
+(written alongside the table as `keys-maps.json`).
+
+Survival in UCSF-PDGM is recorded from a different reference point than in the remaining
+cohorts. The script estimates that difference as a Cox log hazard ratio between the two
+`site` groups, checks it against the Grambsch-Therneau test and a permutation test on the
+concordance index, and adds an `OS (days) - corrected` column rescaled by it. The
+Kaplan-Meier curves before and after the correction are written to `OS-stats/`.
 
 **4. Statistics and modelling**
 
@@ -97,7 +107,7 @@ IPCW-corrected concordance for right-censored data.
 │   ├── TDMaps-extraction.py        #      TDI / L-TDI extraction
 │   └── morphology-extraction.py    #      compartment volumes
 │
-├── createDatabase.ipynb            #   3. pooled clinical + imaging tables
+├── createDatabase.py               #   3. pooled clinical + imaging tables
 │
 ├── TDIndices_stats.py              #   4. statistics and modelling
 ├── LTDIndices_stats.py
@@ -123,11 +133,15 @@ resection from its longitudinal scans. A few cohorts also carry their own
 
 ## Installation
 
-**Python.** Python 3.12 is recommended.
+**Python.** Python 3.12 is recommended. Everything here was developed and tested inside a
+conda environment, which is also the easiest way to get the version floors in
+`requirements.txt` satisfied:
 
 ```bash
 git clone https://github.com/JoanSano/NormWM_4_Glioblastoma.git
 cd NormWM_4_Glioblastoma
+conda create -n normwm python=3.12
+conda activate normwm
 pip install -r requirements.txt
 ```
 
@@ -164,6 +178,21 @@ python quality-control_registration-MNI.py
 #    -g grade  -n parallel subjects  -s min. streamline density  -k keep .tck files
 ./TDMaps.sh -g IV -n 4 -s 0 -k 0
 ```
+
+Database assembly, from the repository root. It takes the directory holding the cohort
+folders and the output directory (relative paths are resolved under the former):
+
+```bash
+python createDatabase.py /path/to/Glioblastomas RESULTS-GBM_5-cohorts_Tissues \
+                         --idh WT --grade IV --stream-th 0 --format pdf
+```
+
+`--cohorts` restricts the pool to a subset (default: all five), `--stream-th` must match
+the `-s` used by `TDMaps.sh`, and `--pairwise` additionally inspects every pair of
+cohorts rather than only the site effect. Adding `--log` keeps a copy of the printed
+output — sample sizes, censoring, log-rank tests and the fitted site effect — in
+`createDatabase_log.txt` next to the table, or in a file you name. See `--help` for the
+rest.
 
 Pooled statistics, from the repository root. Each script takes a results directory, an
 output folder name and the assembled table:
