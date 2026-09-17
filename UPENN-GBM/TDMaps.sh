@@ -5,7 +5,7 @@ IDH=WT
 KEEP_TCK=1
 DEC=0
 N=1
-STREAM_D_TH=10
+STREAM_D_TH=0
 
 # Usage function
 usage() {
