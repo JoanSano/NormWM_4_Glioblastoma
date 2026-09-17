@@ -1,14 +1,54 @@
-pandas 
-numpy
-matplotlib
-tqdm
-nibabel
-nilearn
-scipy
-scikit-learn
-statsmodels
-scikit-survival
-seaborn
+# NormWM_4_Glioblastoma -- Python dependencies
+#
+# Tested with Python 3.12. Version floors below correspond to the environment
+# the analyses were last run with; newer releases are generally fine.
+#
+#   pip install -r requirements.txt
+#
+# Note: the shell pipelines additionally require external neuroimaging software
+# (ANTs, FSL and MRtrix3), which is NOT installable via pip. See the README.
 
-# To run the Jupyter notebooks, you must install the ipykernel package. 
-# With VSCode, this step should be done automatically.
+# --- Core scientific stack -------------------------------------------------
+numpy>=2.2
+pandas>=2.2
+scipy>=1.15
+joblib>=1.5
+tqdm>=4.67
+
+# --- Plotting --------------------------------------------------------------
+matplotlib>=3.10
+seaborn>=0.13
+
+# --- Neuroimaging I/O ------------------------------------------------------
+nibabel>=5.3
+nilearn>=0.11
+
+# --- Statistics and survival analysis --------------------------------------
+scikit-learn>=1.6
+statsmodels>=0.14
+scikit-survival>=0.28
+lifelines>=0.30
+
+# --- Jupyter ---------------------------------------------------------------
+# Required to run the notebooks. With VSCode this is usually installed for you.
+ipykernel
+
+# ---------------------------------------------------------------------------
+# Optional extras -- only needed for specific, self-contained scripts.
+# Uncomment the ones you need.
+# ---------------------------------------------------------------------------
+
+# Tumour segmentation from raw MRI (segmentation_TCGA_example.ipynb).
+# Install the matching torch build for your CUDA version, then:
+#   python -m monai.bundle download --name brats_mri_segmentation --bundle_dir ~/monai_bundles
+# torch>=2.4
+# monai>=1.4
+
+# Streamline format conversion (UCSF-PDGM/trk2vtk.py).
+# dipy>=1.9
+# vtk>=9.3
+
+# Community detection (UCSF-PDGM/communities-segmentation.py).
+# networkx>=3.4
+# Qommunity is not on PyPI -- install from source:
+#   git clone https://github.com/kacper3615/Qommunity && pip install -e Qommunity
