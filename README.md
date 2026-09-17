@@ -362,11 +362,9 @@ tracts (XTRACT) and cortical lobes (USCLobes / BCI-DNI).
 > resting fMRI. *Journal of Neuroscience Methods*, 374, 109566.
 > https://doi.org/10.1016/j.jneumeth.2022.109566
 
-*Dataset and atlas metadata above were verified against TCIA, figshare and PubMed records.*
 
 ## Contact
 
 Questions, problems and reuse: open an issue, contact
 [Joan Falcó-Roget](https://github.com/JoanSano), or
-send an email to the corresponding addresses in our 
-published work.
+send an email joan.falcoroget@gmail.com.
