@@ -78,8 +78,9 @@ recorded from a different reference point than in the remaining cohorts. The scr
 estimates that difference as a Cox log hazard ratio, adds an `OS (days) - corrected`
 column rescaled by it, runs a battery of diagnostics on whether the difference is really
 about *where patients entered* rather than *who they were*, and closes with an explicit
-recommendation of which of the two survival columns to analyse. Everything it prints,
-draws and tabulates is collected into one self-contained HTML report next to the table.
+recommendation of which of the two survival columns to analyse. Every figure and table it
+produces is collected into one self-contained HTML report next to the table; the terminal
+stays quiet and the line-by-line record goes to a log file beside it.
 
 **This is the least self-explanatory part of the repository, and the part most likely to
 change a published number.** It has its own section below:
@@ -202,14 +203,16 @@ python createDatabase.py /path/to/Glioblastomas RESULTS-GBM_5-cohorts_Tissues \
                          --adjust-covariates age sex eor mgmt
 ```
 
-The diagnostics are not optional and there is no flag to skip them: every run prints
-them, writes them as CSVs, and ends by recommending which survival column to analyse.
+The diagnostics are not optional and there is no flag to skip them: every run computes
+them, writes them as CSVs and into the report, and ends by recommending which survival
+column to analyse.
 `--stream-th` must match the `-s` used by `TDMaps.sh`. See `--help` for the rest and
 [The site correction, in detail](#the-site-correction-in-detail) for how to read the
 output.
 
 | Flag | What it does |
 |---|---|
+| `--idh`, `--grade`, `--stream-th` | Which per-cohort pipeline outputs to read: IDH status, WHO grade (UCSF-PDGM only) and the minimum streamline density the indices were extracted at. `--stream-th` must match the `-s` given to `TDMaps.sh`. |
 | `--cohorts` | Restricts the pool to a subset (default: all five). A selection that is not the first N cohorts by ID is named after its cohorts, so two subsets cannot overwrite each other. |
 | `--adjust-covariates` | Covariates the site model conditions on: any of `age sex eor mgmt kps`. Default: none, i.e. the crude site effect. |
 | `--site-reference` | Cohorts forming the reference group (site 0). Default: UCSF alone. |
@@ -217,16 +220,40 @@ output.
 | `--truncate-months` | Horizons for the administrative-truncation check (default: 12 24 36 48). |
 | `--pairwise` | Also inspect every *pair* of cohorts, not only the two site groups. Slow: it refits the permutation test per pair. |
 | `--output-name` | Base name of the assembled table and everything named after it (default: `data-clinical_TD-tissues_<N>-cohorts`). |
-| `--log` | Keep a copy of the printed run in `createDatabase_log.txt`, or a file you name. |
+| `--log` | Rename the run's log file (default `createDatabase_log.txt`). The run is always logged; this only changes where. |
+| `--verbose` | Also print the run to the terminal. Off by default — see [Where the output goes](#where-the-output-goes). |
 | `--n-perms`, `--seed` | Permutations for the concordance test, and the seed for them. |
 | `--format`, `--show` | Figure format (`pdf`, `svg`, `both`), and whether to display them. |
+
+#### Where the output goes
+
+**The terminal stays quiet.** A run prints two lines when it starts and a short
+summary when it finishes — the paths it wrote and the recommended survival column —
+and nothing in between:
+
+```
+createDatabase.py: pooling UCSF, UPENN, TCGA, RHUH -> /path/RESULTS-GBM_4-cohorts_Tissues
+  running quietly; the run is written to .../createDatabase_log.txt (--verbose to watch it here)
+
+Assembled 999 subjects from 4 cohorts.
+  table   .../data-clinical_TD-tissues_4-cohorts.csv
+  report  .../data-clinical_TD-tissues_4-cohorts_report.html
+  log     .../createDatabase_log.txt
+  verdict RAW -- analyse 'OS (days)'
+```
+
+Everything else — every sample size, fit, test and warning — goes to the log file,
+which is always written. `--verbose` mirrors it to the terminal as well. Progress
+bars are unaffected either way: they go to stderr, so a long run still shows that it
+is alive.
 
 Every run writes, next to the assembled table:
 
 | File | Contents |
 |---|---|
 | `<stem>.csv` / `.tsv` | The pooled table, including `OS (days)`, `OS (days) - corrected` and `site correction factor` (which makes the rescaling invertible per subject). |
-| `<stem>_report.html` | **Start here.** Every figure, table, the recommendation and the full log in one self-contained file. Open it in a browser; print it to PDF from there. |
+| `<stem>_report.html` | **Start here.** Every figure, every table and the recommendation in one self-contained file. Open it in a browser; print it to PDF from there. |
+| `createDatabase_log.txt` | The full run, line by line: sample sizes, censoring, every fit and every warning. The report points at it rather than embedding it. |
 | `<stem>_site-correction.json` | Machine-readable provenance: the coefficient, its CI, the design, the resolved site partition and the recommended column. |
 | `keys-maps.json` | The categorical encodings used in the table. |
 | `OS-stats/` | The figures as `.pdf`/`.svg`, and the diagnostic tables as `Site-diagnostics_*.csv`. |
@@ -306,6 +333,49 @@ Every run produces these, in the HTML report and as CSVs under `OS-stats/`:
 The forest plot of the ladder is the single most useful picture: if the site log-HR walks
 towards zero as covariates enter, the gap was case-mix.
 
+Hazard ratios are reported **per native unit** — one year of age, one KPS point — rather
+than rescaled to per-10 units, so a coefficient can be read straight against the column it
+came from. That puts the informative digits in the 2nd–3rd decimal, which is why the
+stratified table prints six: age reads `1.029380`, not `1.03`. Precision is set per column
+rather than per table, so counts stay integers and p-values keep their own notation
+(`<0.001`) instead of rounding to `0.000000`.
+
+### Reading the figures
+
+Three kinds of figure are produced, in `OS-stats/` and embedded in the report.
+
+**Cohort survival, before and after correction.** One Kaplan-Meier curve per cohort, with
+the omnibus log-rank annotated and pairwise log-rank tests in the log. Beneath each is a
+
+```
+No. at risk (right-censored)
+ 367 (0)    96 (102)   21 (130)    2 (143)    0 (144)    0 (144)
+ 496 (0)   149 (2)     49 (2)     25 (3)     13 (6)      3 (11)
+```
+
+row: the number still under observation at that month, and in brackets the *cumulative*
+number right-censored before it. The convention matches the one used by the
+`Tract-Density_Components-Survival` repository, so tables from the two read alike. Columns
+are thinned to whatever fits the axis at a legible size, and each printed column is centred
+on its tick.
+
+**The adjustment ladder forest plot.** The site log-HR with its 95% CI, one row per rung,
+labelled with the sample each was fitted on.
+
+**The site-effect figure** (`Site-effects_Survival-times_*`) has three panels, and they do
+not all describe the same model:
+
+| Panel | What it shows |
+|---|---|
+| Top left | Complementary log-log curves per group, with an **unadjusted** log-rank. A Kaplan-Meier curve has no covariates to hold fixed, so this panel is marginal by construction and its annotation says so. |
+| Bottom left | Scaled Schoenfeld residuals and the Grambsch-Therneau test **for the model whose coefficient is actually applied** — adjusted when the correction is adjusted. Proportional hazards is a property of a model, not of a pair of groups, so diagnosing the crude fit while applying an adjusted coefficient would vouch for the wrong model. The axis label names the covariates and the complete-case sample the panel rests on. |
+| Right | Survival after rescaling group 1's times, with the uncorrected curve overlaid in grey. The legend states the log HR applied and whether it is crude or adjusted. |
+
+`--pairwise` produces the same figure for every *pair* of cohorts. Each pair gets its own
+adjusted coefficient, estimated on that pair alone — a coefficient borrowed from the site
+model would describe a different contrast — and its diagnostic panel is fitted on that same
+model.
+
 ### The recommendation
 
 Each run ends with an explicit verdict — printed, in the report, and in the provenance
@@ -348,7 +418,9 @@ not of the method, and a different subset can land the other way.
 - **Use one remedy, not both.** Rescaling the outcome and stratifying the baseline hazard
   by cohort correct the same difference; applying both removes it twice.
 - **Read the report before the table.** `<stem>_report.html` holds the figures, the
-  diagnostics and the verdict in the order the analysis ran.
+  diagnostics and the verdict in the order the analysis ran. For the line-by-line
+  record of what was fitted, read `createDatabase_log.txt` beside it — the report
+  names the file rather than embedding it.
 - **Quote the provenance.** `<stem>_site-correction.json` records the coefficient, its CI,
   the design, the resolved site partition and the recommended column — everything needed
   to state in a methods section what was done to the survival times.
