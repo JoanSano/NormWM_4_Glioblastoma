@@ -25,6 +25,7 @@ This reframes glioblastoma as a network disease rather than a focal one.
 - [Repository layout](#repository-layout)
 - [Installation](#installation)
 - [Usage](#usage)
+- [The site correction, in detail](#the-site-correction-in-detail)
 - [Data](#data)
 - [Citation](#citation)
 - [Acknowledgements](#acknowledgements)
@@ -72,11 +73,17 @@ inclusion criteria (IDH-wildtype, grade IV, treatment-naive, known survival), co
 survival to days, and recodes sex, MGMT and extent of resection onto common integer keys
 (written alongside the table as `keys-maps.json`).
 
-Survival in UCSF-PDGM is recorded from a different reference point than in the remaining
-cohorts. The script estimates that difference as a Cox log hazard ratio between the two
-`site` groups, checks it against the Grambsch-Therneau test and a permutation test on the
-concordance index, and adds an `OS (days) - corrected` column rescaled by it. The
-Kaplan-Meier curves before and after the correction are written to `OS-stats/`.
+The cohorts are also split into two `site` groups, because survival in UCSF-PDGM is
+recorded from a different reference point than in the remaining cohorts. The script
+estimates that difference as a Cox log hazard ratio, adds an `OS (days) - corrected`
+column rescaled by it, runs a battery of diagnostics on whether the difference is really
+about *where patients entered* rather than *who they were*, and closes with an explicit
+recommendation of which of the two survival columns to analyse. Everything it prints,
+draws and tabulates is collected into one self-contained HTML report next to the table.
+
+**This is the least self-explanatory part of the repository, and the part most likely to
+change a published number.** It has its own section below:
+[The site correction, in detail](#the-site-correction-in-detail).
 
 **4. Statistics and modelling**
 
@@ -187,12 +194,42 @@ python createDatabase.py /path/to/Glioblastomas RESULTS-GBM_5-cohorts_Tissues \
                          --idh WT --grade IV --stream-th 0 --format pdf
 ```
 
-`--cohorts` restricts the pool to a subset (default: all five), `--stream-th` must match
-the `-s` used by `TDMaps.sh`, and `--pairwise` additionally inspects every pair of
-cohorts rather than only the site effect. Adding `--log` keeps a copy of the printed
-output — sample sizes, censoring, log-rank tests and the fitted site effect — in
-`createDatabase_log.txt` next to the table, or in a file you name. See `--help` for the
-rest.
+To condition the site effect on case-mix — **recommended**, and the basis of the
+recommendation the run ends with:
+
+```bash
+python createDatabase.py /path/to/Glioblastomas RESULTS-GBM_5-cohorts_Tissues \
+                         --adjust-covariates age sex eor mgmt
+```
+
+The diagnostics are not optional and there is no flag to skip them: every run prints
+them, writes them as CSVs, and ends by recommending which survival column to analyse.
+`--stream-th` must match the `-s` used by `TDMaps.sh`. See `--help` for the rest and
+[The site correction, in detail](#the-site-correction-in-detail) for how to read the
+output.
+
+| Flag | What it does |
+|---|---|
+| `--cohorts` | Restricts the pool to a subset (default: all five). A selection that is not the first N cohorts by ID is named after its cohorts, so two subsets cannot overwrite each other. |
+| `--adjust-covariates` | Covariates the site model conditions on: any of `age sex eor mgmt kps`. Default: none, i.e. the crude site effect. |
+| `--site-reference` | Cohorts forming the reference group (site 0). Default: UCSF alone. |
+| `--ladder-covariates` | Covariates the diagnostics ladder walks (default: `--adjust-covariates` if given, else `age sex eor mgmt`). |
+| `--truncate-months` | Horizons for the administrative-truncation check (default: 12 24 36 48). |
+| `--pairwise` | Also inspect every *pair* of cohorts, not only the two site groups. Slow: it refits the permutation test per pair. |
+| `--output-name` | Base name of the assembled table and everything named after it (default: `data-clinical_TD-tissues_<N>-cohorts`). |
+| `--log` | Keep a copy of the printed run in `createDatabase_log.txt`, or a file you name. |
+| `--n-perms`, `--seed` | Permutations for the concordance test, and the seed for them. |
+| `--format`, `--show` | Figure format (`pdf`, `svg`, `both`), and whether to display them. |
+
+Every run writes, next to the assembled table:
+
+| File | Contents |
+|---|---|
+| `<stem>.csv` / `.tsv` | The pooled table, including `OS (days)`, `OS (days) - corrected` and `site correction factor` (which makes the rescaling invertible per subject). |
+| `<stem>_report.html` | **Start here.** Every figure, table, the recommendation and the full log in one self-contained file. Open it in a browser; print it to PDF from there. |
+| `<stem>_site-correction.json` | Machine-readable provenance: the coefficient, its CI, the design, the resolved site partition and the recommended column. |
+| `keys-maps.json` | The categorical encodings used in the table. |
+| `OS-stats/` | The figures as `.pdf`/`.svg`, and the diagnostic tables as `Site-diagnostics_*.csv`. |
 
 Pooled statistics, from the repository root. Each script takes a results directory, an
 output folder name and the assembled table:
@@ -208,6 +245,117 @@ python LTDIndices_stats.py  /path/to/RESULTS-GBM_4-cohorts_Tissues/ \
 `--format` chooses `pdf` or `svg` figures. `TDIndices_stats.py` and `Volumes_stats.py`
 take the same arguments. Remaining analyses run as notebooks, in the order given in
 [What the pipeline does](#what-the-pipeline-does).
+
+## The site correction, in detail
+
+Pooling five cohorts creates a problem that has nothing to do with biology: **UCSF-PDGM
+records survival from a different reference point than the other four.** Left alone, that
+shows up as a survival difference between cohorts and contaminates every downstream
+model. Removing it is not optional. Removing *too much* is the risk, and that is what this
+section is about.
+
+### The two things `site` could be
+
+A survival gap between two groups of cohorts can come from either of two sources, and they
+call for opposite responses:
+
+| Source | What it is | What to do |
+|---|---|---|
+| **Entry point** | The clock starts at a different event in one cohort. An artefact of record-keeping. | Remove it — rescale the times, or stratify the baseline hazard. |
+| **Case-mix** | The cohorts really do hold different patients: more methylated MGMT, more gross-total resections, older patients. A genuine prognostic difference. | **Keep it.** Adjust for the covariates in the downstream model instead. |
+
+Removing case-mix by rescaling the outcome destroys signal you are trying to measure, and
+if the downstream model *also* adjusts for those covariates, the same effect is removed
+twice. The whole apparatus below exists to tell the two sources apart before deciding.
+
+### What the correction actually does
+
+The script fits a Cox model for the 0/1 `site` indicator and writes
+
+```
+OS (days) - corrected = OS (days) × exp(logHR × site)
+```
+
+so group 0 (the reference) is untouched and group 1's times are rescaled by a single
+constant. `site correction factor` stores that per-subject multiplier, so the operation is
+invertible. `--site-reference` chooses which cohorts form group 0; the default is UCSF
+alone, but nothing in the method requires that, and naming *every* selected cohort leaves
+one group and applies no correction at all.
+
+With `--adjust-covariates`, the coefficient comes from a model that also holds age, sex,
+EOR, MGMT and/or KPS fixed. That model is fitted on the subjects reporting every chosen
+covariate, and the resulting coefficient is applied to **all** subjects — so the assembled
+table never shrinks. Missingness here is severe and cohort-structured (EOR is unrecorded
+for all of TCGA, MGMT for all of RHUH, KPS for all of UCSF and LUMIERE), and a
+complete-case *table* would cost most of the sample. The transfer assumes the site effect
+is the same in complete and incomplete cases; the balance table's missingness columns are
+the evidence you weigh that against.
+
+### Reading the diagnostics
+
+Every run produces these, in the HTML report and as CSVs under `OS-stats/`:
+
+| Table | The question it answers |
+|---|---|
+| **Balance and missingness** | How different are the two groups to begin with? An absolute SMD above 0.10 marks an imbalance worth adjusting for. The two `pct_missing` columns sit next to it because a covariate one group never records cannot be balanced by any adjustment. |
+| **Adjustment ladder** | How much of the site effect is case-mix? Every rung is fitted on *one fixed complete-case sample*, so rows differ only in what is adjusted for, never in who is in the model. Watch `logHR` shrink as covariates enter, and read `pct_of_crude_removed`. |
+| **Follow-up (reverse KM)** | Were the groups watched for equally long? Median *potential* follow-up, not median observed survival. A log-rank on the censoring distribution is reported beside it. |
+| **Administrative truncation** | Is the effect an artefact of unequal follow-up? Everyone is censored at a common horizon, which makes the groups equally observed by construction. An estimate that barely moves across horizons is not a follow-up artefact. |
+| **Cohort-stratified Cox** | The alternative to rescaling: leave the baseline hazard free per cohort instead of touching the outcome. Its rows are **mutually adjusted** covariate effects on one complete-case sample — not a univariate effect per covariate. The raw and corrected rows are identical by construction, which is what makes the two approaches alternatives rather than things to do together. |
+
+The forest plot of the ladder is the single most useful picture: if the site log-HR walks
+towards zero as covariates enter, the gap was case-mix.
+
+### The recommendation
+
+Each run ends with an explicit verdict — printed, in the report, and in the provenance
+JSON as `recommended_outcome`. The rule it applies is:
+
+> Fit the site effect adjusted for case-mix. **If its 95% confidence interval covers
+> zero, use the raw survival times** and adjust or stratify for cohort downstream. If it
+> excludes zero, the corrected column is defensible.
+
+The verdict is computed from the adjustment ladder, which runs on every invocation
+regardless of what was applied — so **the recommendation can disagree with the column the
+table actually carries**, and it says so when it does. The corrected column is always
+written; nothing downstream is obliged to use it.
+
+It also reports what qualifies the verdict: a rejected proportional-hazards test (a single
+multiplicative factor is then the wrong description at every follow-up time, and
+stratification is safer), the size of the complete-case sample the estimate rests on, the
+largest remaining imbalance, and whether the censoring distributions differ.
+
+### What the pooled four-cohort run concludes
+
+For the canonical UCSF + UPENN + TCGA + RHUH pool, adjusted for age, sex, EOR and MGMT:
+
+| | log HR | 95% CI | p | n |
+|---|---|---|---|---|
+| Crude site effect | 0.2922 | 0.1374 to 0.4471 | <0.001 | 999 |
+| Adjusted for case-mix | 0.1381 | −0.0594 to 0.3356 | 0.171 | 617 |
+
+Case-mix accounts for roughly 55% of the site effect, and what remains is not
+distinguishable from zero. **The verdict for this pool is RAW**: analyse `OS (days)` and
+adjust or stratify for cohort in the downstream model. The gap between UCSF-PDGM and the
+rest is mostly its MGMT and EOR distribution, not its entry point, and rescaling the
+outcome by it would remove prognostic signal that belongs to those covariates.
+
+Re-run the assembly for any other cohort selection: the verdict is a property of the pool,
+not of the method, and a different subset can land the other way.
+
+### Practical rules
+
+- **Use one remedy, not both.** Rescaling the outcome and stratifying the baseline hazard
+  by cohort correct the same difference; applying both removes it twice.
+- **Read the report before the table.** `<stem>_report.html` holds the figures, the
+  diagnostics and the verdict in the order the analysis ran.
+- **Quote the provenance.** `<stem>_site-correction.json` records the coefficient, its CI,
+  the design, the resolved site partition and the recommended column — everything needed
+  to state in a methods section what was done to the survival times.
+- **The correction is invertible.** Divide by `site correction factor` to recover the raw
+  times from a corrected table.
+
+---
 
 ## Data
 
