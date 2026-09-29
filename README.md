@@ -295,10 +295,7 @@ The report follows the order the analysis ran. What each part answers:
 | **Method, and the choices behind it** | The assumptions, equations and references. |
 
 With `--pairwise`, the site-effect figure and the proportional-hazards section are
-repeated for every pair of cohorts.
-
-Hazard ratios are per native unit (one year of age, one KPS point). A p-value below the
-last digit shown is printed as `p < 0.0001`, never `p = 0.0000`.
+repeated for every pair of cohorts. Hazard ratios are per native unit (one year of age, one KPS point).
 
 ### Choosing raw or corrected survival
 
