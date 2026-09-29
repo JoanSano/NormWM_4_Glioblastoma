@@ -42,10 +42,8 @@ obtained is recorded in `<stem>_site-correction.json` next to the table.
 
 The evidence behind that choice is reported on every run -- covariate balance and
 missingness between the site groups, a same-sample adjustment ladder, a
-reverse-Kaplan-Meier follow-up comparison and an administrative-truncation check.
-`--ladder-covariates` and `--truncate-months` shape it; nothing turns it off,
-because a correction whose justification is optional is a correction nobody
-checks.
+reverse-Kaplan-Meier follow-up comparison and an estimate of how the site effect
+varies over follow-up time. `--ladder-covariates` shapes it.
 
 Every figure and table the run produces, and the recommendation it ends with, are
 collected into a single self-contained `<stem>_report.html` next to the table, with
@@ -106,9 +104,10 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pylab as plt
 import numpy as np
 import pandas as pd
-from lifelines import CoxPHFitter
+from lifelines import CoxPHFitter, CoxTimeVaryingFitter
 from lifelines.statistics import proportional_hazard_test
 from lifelines.utils.lowess import lowess
+from scipy import stats as scipy_stats
 from sksurv.compare import compare_survival
 from sksurv.linear_model import CoxPHSurvivalAnalysis
 from sksurv.nonparametric import kaplan_meier_estimator
@@ -326,7 +325,8 @@ class Report:
         """Append a paragraph of explanatory prose.
 
         Args:
-            text: Plain text; escaped, so it may contain < and &.
+            text: Plain text; escaped, so it may contain < and &. Inline maths
+                goes between \\( and \\), in LaTeX.
         """
         self.blocks.append(("paragraph", text))
 
@@ -365,6 +365,25 @@ class Report:
         """
         self.blocks.append(("callout", text))
 
+    def equation(self, tex):
+        """Append a displayed equation.
+
+        Args:
+            tex: LaTeX source, without the surrounding $$. Rendered by KaTeX when
+                the report is opened; offline, the source itself is shown, which
+                is still readable.
+        """
+        self.blocks.append(("equation", tex))
+
+    def references(self, items):
+        """Append a numbered reference list.
+
+        Args:
+            items: Citations in order; the numbering matches the [n] markers
+                used in the prose above.
+        """
+        self.blocks.append(("references", list(items)))
+
     def code(self, text, caption=None):
         """Append a block of preformatted text: a log, or a JSON document.
 
@@ -393,6 +412,11 @@ class Report:
                 parts.append(f"<p>{html.escape(payload)}</p>")
             elif kind == "callout":
                 parts.append(f'<p class="verdict">{html.escape(payload)}</p>')
+            elif kind == "equation":
+                parts.append(f'<div class="eq">$${html.escape(payload)}$$</div>')
+            elif kind == "references":
+                parts.append("<ol class=\"refs\">" + "".join(
+                    f"<li>{html.escape(item)}</li>" for item in payload) + "</ol>")
             elif kind == "code":
                 text, caption = payload
                 if caption:
@@ -474,9 +498,19 @@ _REPORT_HEAD = """<!DOCTYPE html>
   th {{ text-align: right; font-weight: 600; }}
   td:first-child, th:first-child, td:nth-child(2), th:nth-child(2) {{ text-align: left; }}
   tbody tr:nth-child(even) {{ background: var(--band); }}
+  ol.refs {{ font-size: 0.86rem; color: var(--ink); padding-left: 24px; }}
+  ol.refs li {{ margin-bottom: 7px; }}
+  div.eq {{ overflow-x: auto; overflow-y: hidden; margin: 10px 0 14px; }}
   pre {{ background: var(--band); border: 1px solid var(--rule); border-radius: 6px;
          padding: 12px; overflow-x: auto; font-size: 0.8rem; line-height: 1.45; }}
-</style></head><body><main>"""
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {{delimiters: [
+    {{left: '$$', right: '$$', display: true}},
+    {{left: '\\\\(', right: '\\\\)', display: false}}], throwOnError: false}});"></script>
+</head><body><main>"""
 
 
 def at_risk_and_censored(data, months, duration_col, status_col):
@@ -976,7 +1010,8 @@ def plot_cohort_survival(
     # would otherwise abort the whole run inside sksurv.
     if len(set(GROUP_STATS)) >= 2:
         chisquared, p_val, stats, covariance = compare_survival(OS_STATS, GROUP_STATS, return_stats=True)
-        ax.text(0.70, 0.90, r"$\chi^2 =$" + f"{round(chisquared, 4)}, \np = {round(p_val, 4)}",
+        ax.text(0.70, 0.90, r"$\chi^2 =$" + f"{chisquared:.4f}, "
+                + f"\n{fmt_p_phrase(p_val)}",
                 transform=ax.transAxes, fontsize=10, verticalalignment="top",
                 bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val <= 0.05 else "black")
     else:
@@ -1015,8 +1050,8 @@ def plot_cohort_survival(
             OS_STATS[pair], list(GROUP_STATS[pair]), return_stats=False
         )
         message = (f"Cohorts {name_cohort[cohort_ids[i]]} and {name_cohort[cohort_ids[j]]}: "
-                   f"chi-squared of {chisquared.round(4)} with p-value of {p_val.round(4)} "
-                   f"(two-sided log-rank test)")
+                   f"chi-squared of {float(chisquared):.4f} with p-value of "
+                   f"{fmt_p_inline(float(p_val))} (two-sided log-rank test)")
         print(f"ATENTION!!\n------>\t {message}" if p_val <= 0.05 else message)
 
 
@@ -1127,7 +1162,7 @@ def inspect_survival_diffs_in_paired_cohorts(
     OS_STATS = as_structured([e for e, _ in OS_STATS], [t for _, t in OS_STATS])
     chisquared, p_val, stats, covariance = compare_survival(OS_STATS, GROUP_STATS, return_stats=True)
     ax1.text(0.05, 0.90,
-             r"$\chi^2 =$" + f"{round(chisquared, 4)}, \np = {round(p_val, 4)}"
+             r"$\chi^2 =$" + f"{chisquared:.4f}, \n{fmt_p_phrase(p_val)}"
              + "\n(log-rank, unadjusted)",
              transform=ax1.transAxes, fontsize=10, verticalalignment="top",
              bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val <= 0.05 else "black")
@@ -1156,8 +1191,11 @@ def inspect_survival_diffs_in_paired_cohorts(
         p_Cmodel = CoxPHSurvivalAnalysis()
         p_Cmodel.fit(X, perm_y)
         pop.append(p_Cmodel.score(X, perm_y))
+    # A permutation p-value cannot be smaller than one draw out of n_perms, and
+    # reporting the 0 that np.mean returns would claim a precision the test lacks
     p_value = np.mean(np.array(pop) >= c_index)
-    print(f"C-index = {c_index} (p={p_value})")
+    p_shown = (f"p < {1.0 / n_perms:.2g}" if p_value == 0 else f"p = {p_value:.4g}")
+    print(f"C-index = {c_index:.6f} (permutation {p_shown}, {n_perms} draws)")
     print(f"Log HR = {Cmodel.coef_}")
 
     # Plot Schoenfeld residuals. The covariate is remapped to {0, 1} here as well:
@@ -1225,7 +1263,8 @@ def inspect_survival_diffs_in_paired_cohorts(
             y_lowess = lowess(tt_, site_schoenfeld_residuals[ix])
             ax3.scatter(tt_, y_lowess, color="gray", alpha=0.10, s=2, marker="+")
         kind_ph = ("adjusted for " + ", ".join(ph_covariates)) if ph_covariates else "unadjusted"
-        ax3.set_xlabel(f"rank-transformed time\n(GT={rank_stat:.4f}; p={p_val_GT:.4f})\n"
+        ax3.set_xlabel(f"rank-transformed time\n"
+                       f"(GT={rank_stat:.4f}; {fmt_p_phrase(p_val_GT)})\n"
                        f"{kind_ph}; n={len(data)} of {n_curves}", fontsize=8)
     ax3.set_ylabel("scaled-Schoenfeld Residuals", fontsize=10)
     ax3.spines[["top", "right"]].set_visible(False)
@@ -1258,7 +1297,8 @@ def inspect_survival_diffs_in_paired_cohorts(
 
     OS_STATS_deSITE = as_structured([e for e, _ in OS_STATS_deSITE], [t for _, t in OS_STATS_deSITE])
     chisquared, p_val, stats, covariance = compare_survival(OS_STATS_deSITE, GROUP_STATS, return_stats=True)
-    ax2.text(0.70, 0.90, r"$\chi^2 =$" + f"{round(chisquared, 4)}, \np = {round(p_val, 4)}",
+    ax2.text(0.70, 0.90, r"$\chi^2 =$" + f"{chisquared:.4f}, "
+             + f"\n{fmt_p_phrase(p_val)}",
              transform=ax2.transAxes, fontsize=10, verticalalignment="top",
              bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val <= 0.05 else "black")
 
@@ -1311,15 +1351,52 @@ def inspect_survival_diffs_in_paired_cohorts(
 # import the other. The names match the pipeline's on purpose, so both logs read
 # alike; the duplication is the price of keeping the repositories independent.
 # ---------------------------------------------------------------------------
-def fmt_p(p):
+def fmt_p(p, decimals=3):
     """A p-value at a fixed width, without pretending to precision it lacks.
 
     Args:
         p: The p-value, or None/NaN when the test could not be run.
+        decimals: Digits after the point.
+
+    A value smaller than the last digit shown prints as "<0.001" (or "<0.0001",
+    or whatever `decimals` makes the floor) rather than as a row of zeros: a
+    p-value rounded to 0.0000 claims the test returned exactly zero, which no
+    test does, and hides how much smaller than the threshold it really was.
     """
+    width = decimals + 5
     if p is None or (isinstance(p, float) and np.isnan(p)):
-        return "     n/a"
-    return "  <0.001" if p < 0.001 else f"{p:8.3f}"
+        return "n/a".rjust(width)
+    floor = 10.0 ** (-decimals)
+    if p < floor:
+        return f"<{floor:.{decimals}f}".rjust(width)
+    return f"{p:{width}.{decimals}f}"
+
+
+def fmt_p_inline(p, decimals=4):
+    """The same, unpadded, for a figure label or a sentence.
+
+    Args:
+        p: The p-value, or None/NaN.
+        decimals: Digits after the point.
+    """
+    return fmt_p(p, decimals).strip()
+
+
+def fmt_p_phrase(p, decimals=4, label="p"):
+    """"p < 0.0001" or "p = 0.0082" -- never "p = <0.0001".
+
+    Args:
+        p: The p-value, or None/NaN.
+        decimals: Digits after the point.
+        label: What to call it, for a test that reports more than one.
+
+    The comparison sign replaces the equals sign rather than following it, so a
+    p-value below the shown precision reads as the inequality it is.
+    """
+    text = fmt_p_inline(p, decimals)
+    if text.startswith("<"):
+        return f"{label} < {text[1:]}"
+    return f"{label} = {text}"
 
 
 def section(title):
@@ -1357,9 +1434,14 @@ def fit_cox(frame, duration_col, status_col, strata=None):
 
     Separation, collinearity and too-few-events come back as a string rather than
     an exception, so one unfittable rung does not abort a whole ladder.
+
+    The baseline hazard is Breslow's estimator, asked for explicitly rather than
+    left to the default. Ties in the partial likelihood are a different matter:
+    lifelines implements Efron only, and there is no option to change it, so every
+    fit here breaks ties by Efron whatever the baseline method says.
     """
     try:
-        model = CoxPHFitter()
+        model = CoxPHFitter(baseline_estimation_method="breslow")
         model.fit(frame, duration_col=duration_col, event_col=status_col, strata=strata)
         return model, None
     except Exception as exc:  # convergence, singular design, empty strata, ...
@@ -1720,48 +1802,361 @@ def reverse_km_followup(data, site_labels, site_col="site", duration_col="OS (da
     return table
 
 
-def truncation_sensitivity(data, horizons_months, covariates=(), site_col="site",
-                           duration_col="OS (days)", status_col="status"):
-    """Re-estimate the site log-HR under a common administrative horizon.
+def split_at_event_times(frame, duration_col, status_col, columns, max_cuts=1000):
+    """Re-express one row per subject as one row per risk set the subject is in.
 
     Args:
-        data: Table holding the site and survival columns.
-        horizons_months: Horizons to truncate at, in months. A horizon beyond the
-            last observed time of either group is skipped rather than reported as
-            an untruncated estimate, and an untruncated row is always appended.
-        covariates: Keys of ADJUSTMENT_COVARIATES for the adjusted column; empty
-            reports the crude estimate only.
-        site_col: Column holding the 0/1 site indicator.
+        frame: Subjects, one row each, already complete-case and with positive
+            durations.
         duration_col: Column holding the follow-up time, in days.
         status_col: Column holding the 0/1 event indicator.
+        columns: Baseline covariate columns to carry onto every interval.
+        max_cuts: Ceiling on the number of split points. Below it the split is at
+            every distinct event time, which is exact; above it the cuts are taken
+            at quantiles of the event times, which keeps a very large pool
+            tractable at the cost of shrinking the interaction slightly toward
+            zero, because a covariate held constant across a wide interval lags
+            the time it is meant to track.
 
-    Everybody is censored at the horizon (t' = min(t, H), status' = 0 when t > H),
-    which makes the two site groups equally observed by construction. If the site
-    difference were an artefact of one cohort being watched differently, the
-    estimate would move as the horizon tightens; a log-HR stable across horizons
-    is evidence that it is not.
+    Returns a (start, stop] table with `id`, the status carried only on each
+    subject's final interval, and `columns` repeated down the intervals.
+
+    Splitting at the event times is what makes a time-varying coefficient
+    identifiable: every member of a risk set then shares the same interval
+    boundary, so the time covariate takes one value across that comparison rather
+    than a different value for the subject who happens to fail.
     """
-    rows = []
-    for horizon in list(horizons_months) + [None]:
-        block = data.copy()
-        if horizon is not None:
-            limit = horizon * daysXmonth
-            if (block.groupby(site_col)[duration_col].max() < limit).any():
-                continue  # a group is no longer under observation at this horizon
-            block[status_col] = np.where(block[duration_col] > limit, 0, block[status_col])
-            block[duration_col] = np.minimum(block[duration_col], limit)
-        crude = estimate_site_logHR(block, (), duration_col, status_col, site_col)
-        adjusted = (estimate_site_logHR(block, covariates, duration_col, status_col, site_col)
-                    if covariates else None)
+    cuts = np.unique(pd.to_numeric(frame.loc[frame[status_col] == 1, duration_col]))
+    if len(cuts) > max_cuts:
+        cuts = np.unique(np.quantile(cuts, np.linspace(0, 1, max_cuts)))
+    duration = frame[duration_col].values
+    status = frame[status_col].values
+
+    starts, stops, events, owner = [], [], [], []
+    for i, end in enumerate(duration):
+        edges = cuts[cuts < end]
+        lower = np.concatenate(([0.0], edges))
+        upper = np.concatenate((edges, [end]))
+        flags = np.zeros(len(upper))
+        flags[-1] = status[i]
+        starts.append(lower), stops.append(upper)
+        events.append(flags), owner.append(np.full(len(upper), i))
+
+    owner = np.concatenate(owner)
+    out = pd.DataFrame({"id": owner, "start": np.concatenate(starts),
+                        "stop": np.concatenate(stops),
+                        status_col: np.concatenate(events)})
+    for column in columns:
+        out[column] = frame[column].values[owner]
+    return out
+
+
+def proportional_hazards_table(model, frame, transform="rank"):
+    """Grambsch-Therneau test for EVERY term of a fitted model, not only site.
+
+    Args:
+        model: A fitted lifelines CoxPHFitter.
+        frame: The design it was fitted on.
+        transform: Time transform the residuals are tested against.
+
+    Returns a DataFrame with one row per term -- `term`, `test_statistic`, `p`,
+    `p_bonferroni`, `violates` -- sorted with the worst offender first, and `n`,
+    `events`, `transform`, `terms` and `bonferroni` in `.attrs`.
+
+    `violates`, which decides which terms get described over time, is set on the
+    BONFERRONI-adjusted p. Every term of the model is tested at once, so the raw p
+    of the worst of them is not the evidence it appears to be, and a term followed
+    up in error is not free: it produces a panel in the report and a caveat on the
+    recommendation, both of which a reader takes at face value. The raw p is
+    reported beside it so the more sensitive reading stays visible.
+
+    The correction applies a single constant, so the site term must be
+    proportional; but the coefficient it applies comes out of a model that also
+    holds the case-mix covariates fixed, and a covariate whose own effect drifts
+    with time makes that adjustment a misspecified one. Reporting the site row
+    alone, as this script used to, hides exactly that.
+
+    lifelines has no equivalent of R's `cox.zph` GLOBAL row, so `bonferroni` --
+    the smallest p multiplied by the number of terms -- stands in for it. It is
+    conservative rather than exact, and is labelled as such wherever it is shown.
+    """
+    test = proportional_hazard_test(model, frame, time_transform=transform)
+    rows = test.summary.reset_index()
+    rows = rows.rename(columns={rows.columns[0]: "term"})
+    rows = rows[["term", "test_statistic", "p"]].copy()
+    # Both are reported: the raw p is one term's evidence, the adjusted one is
+    # that evidence read against the fact that every term of the model was tested
+    rows["p_bonferroni"] = np.minimum(1.0, rows["p"] * len(rows))
+    rows["violates"] = rows["p_bonferroni"] < ALPHA
+    rows = rows.sort_values("p").reset_index(drop=True)
+    rows.attrs.update(
+        n=len(frame), events=int(model.event_observed.sum()), transform=transform,
+        terms=len(rows),
+        bonferroni=float(rows["p_bonferroni"].min()) if len(rows) else np.nan,
+    )
+    return rows
+
+
+def split_at_event_times(frame, duration_col, status_col, columns, max_cuts=1000):
+    """Re-express one row per subject as one row per risk set the subject is in.
+
+    Args:
+        frame: Subjects, one row each, already complete-case and with positive
+            durations.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        columns: Baseline covariate columns to carry onto every interval.
+        max_cuts: Ceiling on the number of split points. Below it the split is at
+            every distinct event time, which is exact; above it the cuts are taken
+            at quantiles of the event times, which keeps a very large pool
+            tractable at the cost of shrinking the interaction slightly toward
+            zero, because a covariate held constant across a wide interval lags
+            the time it is meant to track.
+
+    Returns a (start, stop] table with `id`, the status carried only on each
+    subject's final interval, and `columns` repeated down the intervals.
+
+    Splitting at the event times is what makes a time-varying coefficient
+    identifiable: every member of a risk set then shares the same interval
+    boundary, so the time covariate takes one value across that comparison rather
+    than a different value for the subject who happens to fail.
+    """
+    cuts = np.unique(pd.to_numeric(frame.loc[frame[status_col] == 1, duration_col]))
+    if len(cuts) > max_cuts:
+        cuts = np.unique(np.quantile(cuts, np.linspace(0, 1, max_cuts)))
+    duration = frame[duration_col].values
+    status = frame[status_col].values
+
+    starts, stops, events, owner = [], [], [], []
+    for i, end in enumerate(duration):
+        edges = cuts[cuts < end]
+        lower = np.concatenate(([0.0], edges))
+        upper = np.concatenate((edges, [end]))
+        flags = np.zeros(len(upper))
+        flags[-1] = status[i]
+        starts.append(lower), stops.append(upper)
+        events.append(flags), owner.append(np.full(len(upper), i))
+
+    owner = np.concatenate(owner)
+    out = pd.DataFrame({"id": owner, "start": np.concatenate(starts),
+                        "stop": np.concatenate(stops),
+                        status_col: np.concatenate(events)})
+    for column in columns:
+        out[column] = frame[column].values[owner]
+    return out
+
+
+def time_varying_terms(frame, terms, duration_col="OS (days)", status_col="status",
+                       max_cuts=1000):
+    """Fit beta(t) = beta + theta*log(t) for the terms that failed the PH test.
+
+    Args:
+        frame: Design matrix plus duration and status, exactly as fitted.
+        terms: Column names to describe over time, one model each.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        max_cuts: Passed to `split_at_event_times`.
+
+    Returns (table, curves): a DataFrame of `term`, `beta`, `theta`, its CI, the
+    likelihood-ratio chi2 and p, `ref_months`, `rows`, `reason`; and a dict of
+    term -> {months, beta_t, lower, upper, beta, theta, ref_months} for plotting.
+
+    One model per offending term rather than one model with every interaction at
+    once: the terms are then each described against the same constant-coefficient
+    baseline, and a term that cannot be fitted does not take the others with it.
+
+    Two details decide whether this is an estimate or an artefact. The interaction
+    is evaluated at each interval's START, the value every member of a risk set
+    shares -- evaluating it at the interval end gives the subject who fails a
+    systematically smaller time than the controls it is compared against, which
+    manufactures a large negative theta out of data with no time trend at all.
+    And there is no main effect of time: it is a function of time alone, so the
+    baseline hazard absorbs it and the fit will not converge.
+    """
+    rows, curves = [], {}
+    covariates = [c for c in frame.columns if c not in (duration_col, status_col)]
+    long = split_at_event_times(frame.reset_index(drop=True), duration_col,
+                                status_col, covariates, max_cuts)
+    reference = float(frame.loc[frame[status_col] == 1, duration_col].median())
+    log_time = np.log(long["start"].clip(lower=1.0)) - np.log(reference)
+    fixed = ["id", "start", "stop", status_col] + covariates
+
+    try:
+        constant = CoxTimeVaryingFitter().fit(
+            long[fixed], id_col="id", event_col=status_col,
+            start_col="start", stop_col="stop", show_progress=False)
+    except Exception as exc:
+        return pd.DataFrame([dict(term=t, reason=f"{type(exc).__name__}") for t in terms]), {}
+
+    observed = frame.loc[frame[status_col] == 1, duration_col]
+    grid = np.linspace(max(observed.quantile(0.01), 1.0), observed.quantile(0.99), 200)
+    u = np.log(grid) - np.log(reference)
+
+    for term in terms:
+        interaction = f"{term} x log(t)"
+        block = long[fixed].copy()
+        block[interaction] = long[term].values * log_time.values
+        try:
+            varying = CoxTimeVaryingFitter().fit(
+                block, id_col="id", event_col=status_col,
+                start_col="start", stop_col="stop", show_progress=False)
+        except Exception as exc:
+            rows.append(dict(term=term, reason=f"{type(exc).__name__}: "
+                                                f"{str(exc).splitlines()[0][:80]}"))
+            continue
+
+        beta = float(varying.params_[term])
+        theta = float(varying.params_[interaction])
+        lr = 2.0 * (varying.log_likelihood_ - constant.log_likelihood_)
+        covariance = varying.variance_matrix_.values
+        names = list(varying.params_.index)
+        b, t = names.index(term), names.index(interaction)
+        variance = (covariance[b, b] + (u ** 2) * covariance[t, t]
+                    + 2 * u * covariance[b, t])
+        se = np.sqrt(np.clip(variance, 0.0, None))
+
         rows.append(dict(
-            horizon_months="none" if horizon is None else horizon,
-            n=crude["n"], events=crude["events"],
-            logHR_crude=crude["logHR"], p_crude=crude["p"],
-            logHR_adjusted=adjusted["logHR"] if adjusted else np.nan,
-            p_adjusted=adjusted["p"] if adjusted else np.nan,
-            n_adjusted=adjusted["n"] if adjusted else np.nan,
-        ))
-    return pd.DataFrame(rows)
+            term=term, beta=beta, theta=theta,
+            theta_ci_low=float(varying.summary.loc[interaction, "coef lower 95%"]),
+            theta_ci_high=float(varying.summary.loc[interaction, "coef upper 95%"]),
+            lr_chi2=float(lr), p=float(scipy_stats.chi2.sf(max(lr, 0.0), 1)),
+            ref_months=reference / daysXmonth, rows=len(long), reason=""))
+        curves[term] = dict(months=grid / daysXmonth, beta_t=beta + theta * u,
+                            lower=beta + theta * u - 1.96 * se,
+                            upper=beta + theta * u + 1.96 * se,
+                            beta=beta, theta=theta,
+                            ref_months=reference / daysXmonth)
+    return pd.DataFrame(rows), curves
+
+
+def plot_time_varying_terms(curves, table, RESULTS, stem, formats, show_plot=True,
+                            title="Terms whose effect is not proportional over time"):
+    """One panel per term that failed the PH test: its fitted beta(t) with a band.
+
+    Args:
+        curves: The dict `time_varying_terms` returned.
+        table: The DataFrame it returned, for each term's theta and p.
+        RESULTS: Results directory; the figure lands in its OS-stats/.
+        stem: File name of the figure, without extension.
+        formats: Figure formats to write.
+        show_plot: Display the figure as well as writing it.
+        title: Figure title.
+
+    A band that stays flat and covers the constant means the term is proportional
+    after all; a sloped band shows the shape the single coefficient is averaging
+    over.
+    """
+    if not curves:
+        return
+    terms = list(curves)[:4]
+    fig, axes = plt.subplots(1, len(terms), figsize=(5.5 * len(terms), 4.6),
+                             squeeze=False)
+    for ax, term in zip(axes[0], terms):
+        c = curves[term]
+        row = table[table["term"] == term].iloc[0]
+        ax.axhline(0, color="black", linewidth=0.9, linestyle="--", zorder=1)
+        ax.fill_between(c["months"], c["lower"], c["upper"], color="tab:blue",
+                        alpha=0.18, zorder=2)
+        ax.plot(c["months"], c["beta_t"], color="tab:blue", linewidth=2.5, zorder=3)
+        ax.axhline(c["beta"], color="tab:purple", linewidth=1.5, zorder=4)
+        ax.axvline(c["ref_months"], color="tab:purple", linewidth=0.8,
+                   linestyle=":", zorder=1)
+        ax.set_title(f"{term}\n"+r'$\theta$'+f" = {row['theta']:+.4f} "
+                     f"({row['theta_ci_low']:+.3f} to {row['theta_ci_high']:+.3f}), "
+                     f"{fmt_p_phrase(row['p'])}", fontsize=9)
+        ax.set_xlabel("Time (months)", fontsize=10)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0][0].set_ylabel("log hazard ratio", fontsize=10)
+    fig.suptitle(title, fontweight="bold")
+    fig.tight_layout()
+    save_figure(fig, RESULTS, stem, formats)
+    plt.show() if show_plot else plt.close(fig)
+
+
+def assess_proportional_hazards(frame, RESULTS, stem, formats, label,
+                                duration_col="OS (days)", status_col="status",
+                                show_plot=True, heading_level=3):
+    """Test PH for every term, and describe beta(t) for the terms that fail.
+
+    Args:
+        frame: Design matrix plus duration and status, as the model is fitted.
+        RESULTS: Results directory; any figure lands in its OS-stats/.
+        stem: File name of the figure, without extension.
+        formats: Figure formats to write.
+        label: What is being assessed, for the headings and the figure title.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        show_plot: Display the figure as well as writing it.
+        heading_level: HTML heading level for the report sections.
+
+    Returns (gt, varying): the per-term Grambsch-Therneau table, and the
+    time-varying fits for the terms that failed it -- an empty DataFrame when
+    every term is proportional, which is the outcome worth hoping for.
+
+    Run for the pooled site comparison and for each pair of cohorts, because the
+    coefficient applied in either case is only as good as the model it came from.
+    """
+    empty = pd.DataFrame()
+    model, reason = fit_cox(frame, duration_col, status_col)
+    if model is None:
+        print(f"Proportional-hazards assessment could not be fitted ({reason}).")
+        REPORT.heading(f"Proportional hazards: {label}", level=heading_level)
+        REPORT.paragraph(f"Not assessed: {reason}")
+        return empty, empty
+
+    gt = proportional_hazards_table(model, frame)
+    violators = gt.loc[gt["violates"], "term"].tolist()
+
+    REPORT.heading(f"Proportional hazards: {label}", level=heading_level)
+    REPORT.paragraph(
+        "Grambsch-Therneau [4] against "
+        f"{gt.attrs['transform']}-transformed time, for every term of the model "
+        "the coefficient comes from -- not the site term alone. A term with a "
+        "small p has an effect that drifts over follow-up, so the single "
+        "coefficient reported for it is an average over the whole curve. Both the "
+        "raw p and the Bonferroni-adjusted one are given: the raw p is one term's "
+        f"evidence, and p_bonferroni reads it against the {gt.attrs['terms']} "
+        "terms tested at once. A term is flagged, and described over time below, "
+        "on the adjusted p -- the whole model is screened in one pass, so the raw "
+        "p of the worst term is not the evidence it appears to be. lifelines "
+        "offers no equivalent of R's cox.zph global row, so the smallest adjusted "
+        "p stands in for it.")
+    gt_formats = dict(test_statistic=lambda v: f"{v:.4f}",
+                      p=lambda v: fmt_p(v, 4),
+                      p_bonferroni=lambda v: fmt_p(v, 4))
+    REPORT.table(gt, formatters=gt_formats)
+    print(gt.to_string(index=False, formatters=gt_formats))
+    print(f"  p_bonferroni is the raw p multiplied by the {gt.attrs['terms']} terms "
+          f"tested, capped at 1; 'violates' is set on it, not on the raw p.")
+
+    if not violators:
+        REPORT.paragraph("Every term is proportional; no term needs describing "
+                         "over time.")
+        print("\nEvery term satisfies proportional hazards.")
+        return gt, empty
+
+    print(f"\n{len(violators)} term(s) fail: {', '.join(violators)}. "
+          f"Describing each over time.")
+    varying, curves = time_varying_terms(frame, violators, duration_col, status_col)
+    REPORT.paragraph(
+        f"{len(violators)} term(s) fail the test. Each is refitted with a "
+        "log-time interaction -- \\(\\beta(t) = \\beta + \\theta\\log(t/t_{\\mathrm{ref}})\\), "
+        "the data split at the event times -- and compared against the "
+        "constant-coefficient model by likelihood ratio. \\(\\theta\\) is the "
+        "change in log hazard ratio per unit of log time, \\(\\beta\\) the log "
+        "hazard ratio at the median event time \\(t_{\\mathrm{ref}}\\), and "
+        "\\(\\theta = 0\\) is proportional hazards. The equations are in the "
+        "Method section at the end.")
+    varying_formats = dict(p=lambda v: fmt_p(v, 4), lr_chi2=lambda v: f"{v:.4f}",
+                           rows=lambda v: f"{int(v):d}")
+    REPORT.table(varying, float_format=lambda v: f"{v:.4f}",
+                 formatters=varying_formats)
+    print(varying.to_string(index=False, float_format=lambda v: f"{v:.4f}",
+                            formatters=varying_formats))
+    plot_time_varying_terms(curves, varying, RESULTS, stem, formats,
+                            show_plot=show_plot,
+                            title=f"Terms that are not proportional: {label}")
+    return gt, varying
 
 
 def plot_adjustment_ladder(ladder, RESULTS, stem, formats, show_plot=True,
@@ -1803,8 +2198,7 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
     Args:
         database: Assembled table, before the correction is applied.
         args: Parsed command line. Read here: `ladder_covariates` (falling back to
-            `adjust_covariates`, then to DEFAULT_LADDER) and `truncate_months`
-            (falling back to 12 24 36 48).
+            `adjust_covariates`, then to DEFAULT_LADDER).
         RESULTS: Results directory; tables and the figure land in its OS-stats/.
         site_labels: {code: name} used to name the site groups in every table.
         formats: Figure formats to write.
@@ -1814,12 +2208,11 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
 
     Writes as CSVs under OS-stats/, and into the report, the balance and
     missingness table between the two site groups, the same-sample adjustment
-    ladder, the reverse-Kaplan-Meier follow-up comparison and the
-    administrative-truncation sensitivity. These are supplement tables rather than
-    lines in a log, so they are saved as well as reported.
+    ladder and the reverse-Kaplan-Meier follow-up comparison, plus the figure of
+    the site effect against follow-up time. These are supplement tables rather
+    than lines in a log, so they are saved as well as reported.
     """
     ladder_covariates = args.ladder_covariates or list(args.adjust_covariates) or DEFAULT_LADDER
-    horizons = args.truncate_months if args.truncate_months is not None else [12, 24, 36, 48]
     out = {}
 
     section("SITE DIAGNOSTICS: is the survival difference case-mix or entry point?")
@@ -1856,8 +2249,11 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
         "ladder, so the rows differ only in what is adjusted for and never in who "
         "is in the model. pct_of_crude_removed is measured against the "
         "complete-case crude rung, not the all-subjects one.")
-    REPORT.table(ladder, float_format=lambda v: f"{v:.4f}")
-    print(ladder.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    ladder_formats = dict(p=lambda v: fmt_p(v, 4), ph_p=lambda v: fmt_p(v, 4),
+                          n=lambda v: f"{int(v):d}", events=lambda v: f"{int(v):d}")
+    REPORT.table(ladder, float_format=lambda v: f"{v:.4f}", formatters=ladder_formats)
+    print(ladder.to_string(index=False, float_format=lambda v: f"{v:.4f}",
+                           formatters=ladder_formats))
     failed = ladder[ladder["reason"].notna() & (ladder["reason"] != "None")]
     if len(failed):
         print(f"\nWARNING: {len(failed)} of {len(ladder)} rungs could not be fitted. The most")
@@ -1866,9 +2262,11 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
         print("         sample onto a single site, leaving nothing to compare. KPS does this")
         print("         (UCSF and LUMIERE record none), which is why it is not in the default")
         print("         ladder. Drop it, or read the balance table's missingness columns.")
-    print("\nNote: these are lifelines (Efron) fits; the coefficient actually applied to")
-    print("the survival times comes from scikit-survival (Breslow). With many tied")
-    print("survival days the two differ in the 2nd-3rd decimal. That is expected.")
+    print("\nNote: the baseline hazard is Breslow's throughout, but lifelines breaks")
+    print("ties in the partial likelihood by Efron and offers no alternative, while")
+    print("the coefficient actually applied to the survival times comes from")
+    print("scikit-survival, which uses Breslow for both. With many tied survival days")
+    print("the two differ in the 2nd-3rd decimal. That is expected.")
     plot_adjustment_ladder(ladder, RESULTS, "Site-diagnostics_adjustment-ladder",
                            formats, show_plot=show_plot)
 
@@ -1884,23 +2282,25 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
     print(followup.to_string(index=False, float_format=lambda v: f"{v:.1f}"))
     if "censoring_logrank" in followup.attrs:
         chi2, p_val = followup.attrs["censoring_logrank"]
-        print(f"\nLog-rank on the censoring distribution: chi2 = {chi2:.4f}, p = {fmt_p(p_val).strip()}")
+        print(f"\nLog-rank on the censoring distribution: chi2 = {chi2:.4f}, "
+              f"{fmt_p_phrase(p_val)}")
         print("A difference here is a difference in how long the groups were watched,")
         print("not in how long they survived.")
 
-    subsection("Administrative truncation at a common horizon")
-    truncation = truncation_sensitivity(database, horizons, ladder_covariates)
-    out["truncation"] = truncation
-    REPORT.heading("Administrative truncation at a common horizon", level=3)
-    REPORT.paragraph(
-        "Everybody is censored at the horizon, which makes the two groups equally "
-        "observed by construction. An estimate that barely moves across horizons "
-        "is evidence the difference is not an artefact of differing follow-up.")
-    REPORT.table(truncation, float_format=lambda v: f"{v:.4f}")
-    print(truncation.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
-    print("\nTruncating makes both groups equally observed by construction. An estimate")
-    print("that barely moves across horizons is evidence the difference is not an")
-    print("artefact of differing follow-up.")
+    subsection("Proportional hazards, every term of the adjusted model")
+    design, _, _ = build_site_design(database, ladder_covariates)
+    ph_frame = pd.concat(
+        [design, database[["site"]],
+         pd.to_numeric(database["OS (days)"], errors="coerce").rename("OS (days)"),
+         pd.to_numeric(database["status"], errors="coerce").rename("status")],
+        axis=1).dropna()
+    ph_frame = ph_frame[ph_frame["OS (days)"] > 0]
+    gt, varying = assess_proportional_hazards(
+        ph_frame, RESULTS, "Site-diagnostics_non-proportional-terms", formats,
+        label="pooled site comparison", show_plot=show_plot)
+    out["proportional-hazards"] = gt
+    if not varying.empty:
+        out["non-proportional-terms"] = varying
 
     for name, table in out.items():
         if table is not None and not table.empty:
@@ -1914,7 +2314,6 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
 # reader who disagrees with one can see exactly which sentence it produced.
 ALPHA = 0.05            # a site term whose CI covers 0 is not evidence of a site effect
 SMD_IMBALANCE = 0.10    # |SMD| above this is an imbalance worth adjusting for
-HORIZON_SPREAD = 0.10   # log-HR range across truncation horizons, in log-HR units
 
 
 def _final_rung(ladder):
@@ -1953,7 +2352,6 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
     ladder = diagnostics.get("ladder")
     balance = diagnostics.get("balance")
     followup = diagnostics.get("followup")
-    truncation = diagnostics.get("truncation")
 
     evidence, caveats = [], []
     groups = f"{site_labels.get(0, 0)} (site 0) vs {site_labels.get(1, 1)} (site 1)"
@@ -1973,7 +2371,7 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
     if crude is not None and pd.notna(crude["logHR"]):
         evidence.append(
             f"Crude site effect, {groups}: log HR {crude['logHR']:.4f} "
-            f"(HR {crude['HR']:.3f}, p = {fmt_p(crude['p']).strip()}) on all "
+            f"(HR {crude['HR']:.3f}, {fmt_p_phrase(crude['p'])}) on all "
             f"{int(crude['n'])} subjects.")
 
     if rung is None:
@@ -1990,7 +2388,7 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
     evidence.append(
         f"Adjusted site effect ({rung['model'].lstrip('+ ')}): log HR "
         f"{rung['logHR']:.4f} (95% CI {rung['logHR_ci_low']:.4f} to "
-        f"{rung['logHR_ci_high']:.4f}, p = {fmt_p(rung['p']).strip()}), fitted on "
+        f"{rung['logHR_ci_high']:.4f}, {fmt_p_phrase(rung['p'])}), fitted on "
         f"{int(rung['n'])} subjects with {int(rung['events'])} events.")
     if pd.notna(rung["pct_of_crude_removed"]):
         evidence.append(
@@ -2025,9 +2423,21 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
     if pd.notna(rung["ph_p"]) and rung["ph_p"] < ALPHA:
         caveats.append(
             f"Proportional hazards is rejected for the adjusted site term "
-            f"(p = {fmt_p(rung['ph_p']).strip()}). A single multiplicative factor "
+            f"({fmt_p_phrase(rung['ph_p'])}). A single multiplicative factor "
             f"is then the wrong description of the difference at every follow-up "
             f"time, and stratification is the safer route whatever is decided here.")
+    ph_table = diagnostics.get("proportional-hazards")
+    if ph_table is not None and not ph_table.empty:
+        failed = ph_table.loc[ph_table["violates"] & (ph_table["term"] != "site"),
+                              "term"].tolist()
+        if failed:
+            caveats.append(
+                f"The site term is proportional, but {len(failed)} covariate(s) in "
+                f"the adjustment are not ({', '.join(failed)}). The site "
+                f"coefficient is therefore estimated while holding fixed a "
+                f"covariate whose own effect drifts with follow-up, so it is an "
+                f"average over a model that does not hold at every time. The "
+                f"log-time fits report the drift for each of them.")
     if int(rung["n"]) < int(crude["n"] if crude is not None else rung["n"]):
         lost = int(crude["n"]) - int(rung["n"])
         caveats.append(
@@ -2048,18 +2458,11 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
         if p_censor < ALPHA:
             caveats.append(
                 f"The censoring distributions differ between the groups "
-                f"(log-rank p = {fmt_p(p_censor).strip()}): they were watched for "
+                f"(log-rank {fmt_p_phrase(p_censor)}): they were watched for "
                 f"different lengths of time, which can produce a survival "
-                f"difference on its own. The truncation table is the check on that.")
-    if truncation is not None and not truncation.empty:
-        finite = truncation[truncation["horizon_months"] != "none"]["logHR_crude"].dropna()
-        if len(finite) >= 2:
-            spread = float(finite.max() - finite.min())
-            (evidence if spread <= HORIZON_SPREAD else caveats).append(
-                f"Across the truncation horizons the crude log HR spans {spread:.4f} "
-                f"in log-HR units, {'within' if spread <= HORIZON_SPREAD else 'beyond'}"
-                f" the {HORIZON_SPREAD} considered stable.")
-
+                f"difference on its own. Nothing here can rule that out: "
+                f"non-informative censoring is an assumption of the design, not a "
+                f"finding, and no diagnostic in this script can verify it.")
     # The applied column need not agree with the recommendation
     if verdict == "raw" and provenance.get("mode", "").startswith("rescale"):
         caveats.append(
@@ -2219,13 +2622,13 @@ def apply_site_correction(database, args, RESULTS, site_labels, formats):
             print(f"\nEffect of 'site' adjusted for {', '.join(args.adjust_covariates)}:")
             print(f"  log HR = {logHR_site:.6f}  (95% CI {lo:.4f} to {hi:.4f})")
             print(f"  HR     = {adjusted['HR']:.4f}  (95% CI {np.exp(lo):.4f} to "
-                  f"{np.exp(hi):.4f}, p = {fmt_p(adjusted['p']).strip()})")
+                  f"{np.exp(hi):.4f}, {fmt_p_phrase(adjusted['p'])})")
             print(f"  crude log HR = {logHR_crude:.6f}  -->  "
                   f"{removed:.1f}% of it is explained by the covariates")
             print(f"  estimated on {adjusted['n']} of {len(database)} subjects "
                   f"({adjusted['events']} events); applied to all {len(database)}")
             print(f"  proportional-hazards test on the adjusted site term: "
-                  f"p = {fmt_p(adjusted['ph_p']).strip()}")
+                  f"{fmt_p_phrase(adjusted['ph_p'])}")
             for note in adjusted["notes"]:
                 print(f"  - {note}")
 
@@ -2234,6 +2637,221 @@ def apply_site_correction(database, args, RESULTS, site_labels, formats):
     database["site correction factor"] = np.exp(logHR_site * database["site"])
     provenance["applied_as"] = "OS (days) - corrected = OS (days) * exp(logHR * site)"
     return database, provenance
+
+
+def report_method_and_references():
+    """Append the method notes and the reference list to the report. No arguments.
+
+    Every choice here is a judgement that could reasonably have gone the other
+    way, so each is stated next to the numbers it produced rather than left in a
+    README a reader of the report may never open.
+    """
+    REPORT.heading("Method, and the choices behind it")
+
+    REPORT.heading("What the correction assumes", level=3)
+    REPORT.paragraph(
+        "A survival gap between two groups of cohorts has two possible sources, "
+        "and they call for opposite responses. If the clock starts at a different "
+        "event in one cohort, that is an artefact of record-keeping and should be "
+        "removed. If the cohorts genuinely hold different patients -- more "
+        "methylated MGMT, more gross-total resections, older patients -- that is a "
+        "real prognostic difference and must be kept, because removing it by "
+        "rescaling the outcome destroys the signal the analysis is trying to "
+        "measure. Worse, a downstream model that also adjusts for those covariates "
+        "would then remove the same effect twice. The adjustment ladder exists to "
+        "tell the two sources apart before anything is applied.")
+    REPORT.paragraph(
+        "The correction itself multiplies group 1's survival times by exp(logHR), "
+        "leaving the reference group untouched. That is a single constant for "
+        "everyone in the group, so it is the right shape only if the site log "
+        "hazard ratio is the same early and late -- which is why proportional "
+        "hazards is tested rather than assumed. Stratifying the baseline hazard by "
+        "cohort [1] is the equivalent alternative and needs no rescaling at all; "
+        "the two are alternatives, and applying both corrects the same difference "
+        "twice.")
+
+    REPORT.heading("Covariate adjustment and missing data", level=3)
+    REPORT.paragraph(
+        "The adjusted coefficient is estimated on the subjects reporting every "
+        "chosen covariate and then applied to all of them, so the assembled table "
+        "never shrinks. Missingness here is severe and cohort-structured rather "
+        "than random -- EOR is unrecorded for all of TCGA, MGMT for all of RHUH, "
+        "KPS for all of UCSF and LUMIERE -- so a complete-case table would cost "
+        "most of the sample. The transfer assumes the site effect is the same in "
+        "complete and incomplete cases, which is an assumption doing real work; "
+        "the balance table's missingness columns are the evidence to weigh it "
+        "against. Imbalance is measured by the standardised mean difference [7], "
+        "which unlike a p-value does not shrink as the sample grows.")
+
+    REPORT.heading("Proportional hazards, and what is done when it fails", level=3)
+    REPORT.paragraph(
+        "Every coefficient in this report comes from a Cox model [1]. For subject "
+        "\\(i\\) with site indicator \\(s_i\\) and case-mix covariates "
+        "\\(x_{i1}, \\dots, x_{ip}\\) (the dummy-coded columns of the adjustment "
+        "set), the hazard is")
+    REPORT.equation(
+        r"h_i(t) = h_0(t)\,\exp\!\Big(\beta_{\mathrm{site}}\,s_i"
+        r" + \sum_{k=1}^{p} \beta_k\,x_{ik}\Big),")
+    REPORT.paragraph(
+        "where \\(h_0(t)\\) is left unspecified. Proportional hazards is the claim "
+        "that each \\(\\beta\\) is a constant, so that the hazard ratio between any "
+        "two subjects does not depend on time:")
+    REPORT.equation(
+        r"\frac{h_i(t)}{h_j(t)} = \exp\!\big(\boldsymbol\beta^{\top}"
+        r"(\mathbf{x}_i - \mathbf{x}_j)\big) \quad \text{for every } t.")
+    REPORT.paragraph(
+        "It is tested for every term of the model the coefficient comes from, not "
+        "for the site term alone: \\(\\hat\\beta_{\\mathrm{site}}\\) is estimated "
+        "while holding the covariates fixed, so a covariate whose own effect drifts "
+        "with time makes that adjustment a misspecified one. The alternative each "
+        "term is tested against lets its coefficient move with a known function of "
+        "time \\(g(t)\\):")
+    REPORT.equation(
+        r"\beta_k(t) = \beta_k + \theta_k\,g(t), \qquad"
+        r" H_0:\ \theta_k = 0.")
+    REPORT.paragraph(
+        "The Grambsch-Therneau test [4, 5] is the score test for \\(\\theta_k\\), "
+        "and needs only the constant-coefficient fit. Order the \\(D\\) event times "
+        "\\(t_1 \\le \\dots \\le t_D\\), let \\(i_j\\) be the subject failing at "
+        "\\(t_j\\) and \\(R(t_j)\\) everyone still at risk then. The Schoenfeld "
+        "residual is the failing subject's covariates minus their risk-weighted "
+        "average over the risk set, and scaling it by the inverse information "
+        "turns it into a noisy reading of the coefficient at that moment:")
+    REPORT.equation(
+        r"\mathbf r_j = \mathbf x_{i_j} - \frac{\sum_{l \in R(t_j)} \mathbf x_l\,"
+        r"e^{\hat{\boldsymbol\beta}^{\top}\mathbf x_l}}"
+        r"{\sum_{l \in R(t_j)} e^{\hat{\boldsymbol\beta}^{\top}\mathbf x_l}},"
+        r"\qquad \mathbf s^{*}_j = D\,\widehat{\operatorname{Var}}"
+        r"(\hat{\boldsymbol\beta})\,\mathbf r_j,"
+        r"\qquad \mathbb E\big[s^{*}_{kj}\big] + \hat\beta_k \approx \beta_k(t_j).")
+    REPORT.paragraph(
+        "A time trend in \\(\\beta_k\\) is therefore a correlation between "
+        "\\(s^{*}_{kj}\\) and \\(g(t_j)\\), and the statistic measures it:")
+    REPORT.equation(
+        r"T_k = \frac{\Big[\sum_{j=1}^{D} (g_j - \bar g)\, s^{*}_{kj}\Big]^2}"
+        r"{D\;\widehat{\operatorname{Var}}(\hat\beta_k)\,\sum_{j=1}^{D}"
+        r"(g_j - \bar g)^2} \;\sim\; \chi^2_1 \ \text{under } H_0,"
+        r"\qquad g_j = j.")
+    REPORT.paragraph(
+        "\\(g_j = j\\) is the rank transform, the lifelines [9] default; R's "
+        "cox.zph defaults to the Kaplan-Meier transform instead. With \\(K\\) "
+        "terms screened in "
+        "one pass, the p-value that decides which terms are followed up is the "
+        "Bonferroni-adjusted one, not the raw one; the raw p is reported beside "
+        "it so the more sensitive reading stays visible:")
+    REPORT.equation(
+        r"p_k^{\mathrm{Bonf}} = \min\big(1,\ K\,p_k\big), \qquad"
+        r" \text{term } k \text{ is followed up if } p_k^{\mathrm{Bonf}} < 0.05.")
+    REPORT.paragraph(
+        "A term that fails is then described rather than merely flagged. It is "
+        "refitted with a log-time interaction, one model per failing term, the "
+        "other terms keeping constant coefficients:")
+    REPORT.equation(
+        r"h_i(t) = h_0(t)\,\exp\!\Big(\sum_{l} \beta_l\,x_{il}"
+        r" + \theta_k\,x_{ik}\,\log\frac{t}{t_{\mathrm{ref}}}\Big)"
+        r"\quad\Longleftrightarrow\quad"
+        r"\beta_k(t) = \beta_k + \theta_k \log\frac{t}{t_{\mathrm{ref}}},")
+    REPORT.paragraph(
+        "with \\(t_{\\mathrm{ref}}\\) the median event time, so \\(\\beta_k\\) is "
+        "the log hazard ratio at that moment rather than at \\(t = 1\\) day. "
+        "Equivalently \\(\\mathrm{HR}_k(t) = e^{\\beta_k}\\,(t/t_{\\mathrm{ref}})"
+        "^{\\theta_k}\\): the hazard ratio is multiplied by \\(2^{\\theta_k}\\) "
+        "each time follow-up doubles, and \\(\\theta_k = 0\\) is proportional "
+        "hazards. Because the covariate \\(x_{ik}\\log(t/t_{\\mathrm{ref}})\\) "
+        "changes with time, the data are split at the event times "
+        "\\(t_{(1)} < \\dots < t_{(D)}\\) into intervals "
+        "\\((t_{(m-1)}, t_{(m)}]\\), and the model is fitted by the partial "
+        "likelihood (written here without the tie correction)")
+    REPORT.equation(
+        r"\ell(\boldsymbol\beta, \theta_k) = \sum_{m=1}^{D} \Big[\eta_{i_m}(\tau_m)"
+        r" - \log \sum_{l \in R(t_{(m)})} e^{\eta_l(\tau_m)}\Big],"
+        r"\qquad \eta_l(\tau) = \sum_{q} \beta_q x_{lq}"
+        r" + \theta_k\,x_{lk}\log\frac{\tau}{t_{\mathrm{ref}}},"
+        r"\qquad \tau_m = \max\big(t_{(m-1)},\ 1\ \text{day}\big).")
+    REPORT.paragraph(
+        "Three details in that expression decide whether the fit is an estimate "
+        "or an artefact, and all three are deliberate. First, the split is at the "
+        "event times rather than on a fixed grid, so the whole risk set "
+        "\\(R(t_{(m)})\\) shares one interval and one value of log time; a monthly "
+        "grid attenuates \\(\\theta_k\\) by roughly a third. Second, the "
+        "interaction is evaluated at \\(\\tau_m\\), the interval's start, the value "
+        "every member of the risk set shares -- evaluating it at the interval end "
+        "hands the subject who fails a systematically smaller time than the "
+        "controls, which on simulated data with no time trend at all rejects "
+        "proportional hazards in twelve of twelve replicates. Third, there is no "
+        "main effect of time: a term \\(\\gamma\\log\\tau_m\\) is the same for "
+        "every subject in the sum, so \\(e^{\\gamma\\log\\tau_m}\\) cancels between "
+        "numerator and denominator, \\(\\gamma\\) never enters "
+        "\\(\\ell\\), and the fit cannot converge. When a pool has more than 1000 "
+        "distinct event times the cuts are taken at 1000 quantiles instead, which "
+        "shrinks \\(\\theta_k\\) slightly toward zero.")
+    REPORT.paragraph(
+        "\\(\\theta_k\\) is tested by likelihood ratio against the "
+        "constant-coefficient fit \\(\\tilde{\\boldsymbol\\beta}\\) on the same "
+        "split data, and the band drawn around \\(\\hat\\beta_k(t)\\) is the "
+        "pointwise 95% interval from the joint covariance of "
+        "\\((\\hat\\beta_k, \\hat\\theta_k)\\):")
+    REPORT.equation(
+        r"\Lambda_k = 2\big[\ell(\hat{\boldsymbol\beta}, \hat\theta_k)"
+        r" - \ell(\tilde{\boldsymbol\beta}, 0)\big] \;\sim\; \chi^2_1,")
+    REPORT.equation(
+        r"\hat\beta_k(t) \pm 1.96\sqrt{\widehat{\operatorname{Var}}(\hat\beta_k)"
+        r" + u^2\,\widehat{\operatorname{Var}}(\hat\theta_k)"
+        r" + 2u\,\widehat{\operatorname{Cov}}(\hat\beta_k, \hat\theta_k)},"
+        r"\qquad u = \log\frac{t}{t_{\mathrm{ref}}}.")
+    REPORT.paragraph(
+        "The band is narrowest at \\(t_{\\mathrm{ref}}\\), where \\(u = 0\\), and "
+        "widens in both directions; it is pointwise, not a simultaneous band over "
+        "the whole curve.")
+
+    REPORT.heading("What cannot be checked here", level=3)
+    REPORT.paragraph(
+        "Nothing in this script can verify that censoring is non-informative -- "
+        "that the patients lost to follow-up were not systematically sicker in one "
+        "group. That is an assumption of the design, not a finding, and if it "
+        "fails the bias sits inside every estimate above. Under independent "
+        "censoring the Cox partial likelihood is consistent however differently the "
+        "two groups were censored, so differential follow-up costs precision rather "
+        "than unbiasedness; the reverse-Kaplan-Meier table [6] reports the "
+        "imbalance so it can be judged, but it cannot rule the problem out.")
+
+    REPORT.heading("Estimation details", level=3)
+    REPORT.paragraph(
+        "The baseline hazard is Breslow's estimator [2] throughout, requested "
+        "explicitly. Ties in the partial likelihood are a separate matter: "
+        "lifelines [9] implements Efron's approximation [3] only and offers no way "
+        "to change it, so every diagnostic fit here breaks ties by Efron, while "
+        "the coefficient actually applied to the survival times comes from "
+        "scikit-survival [10], which uses Breslow for both. With many tied survival "
+        "days the two differ in the second or third decimal. Survival curves are "
+        "Kaplan-Meier estimates [8] with log-log confidence bands.")
+
+    REPORT.heading("References", level=3)
+    REPORT.references([
+        "Cox DR (1972). Regression models and life-tables. Journal of the Royal "
+        "Statistical Society: Series B 34(2), 187-220.",
+        "Breslow N (1974). Covariance analysis of censored survival data. "
+        "Biometrics 30(1), 89-99.",
+        "Efron B (1977). The efficiency of Cox's likelihood function for censored "
+        "data. Journal of the American Statistical Association 72(359), 557-565.",
+        "Grambsch PM, Therneau TM (1994). Proportional hazards tests and "
+        "diagnostics based on weighted residuals. Biometrika 81(3), 515-526.",
+        "Therneau TM, Grambsch PM (2000). Modeling Survival Data: Extending the "
+        "Cox Model. Springer, New York.",
+        "Schemper M, Smith TL (1996). A note on quantifying follow-up in studies "
+        "of failure time. Controlled Clinical Trials 17(4), 343-346.",
+        "Austin PC (2009). Balance diagnostics for comparing the distribution of "
+        "baseline covariates between treatment groups in propensity-score matched "
+        "samples. Statistics in Medicine 28(25), 3083-3107.",
+        "Kaplan EL, Meier P (1958). Nonparametric estimation from incomplete "
+        "observations. Journal of the American Statistical Association 53(282), "
+        "457-481.",
+        "Davidson-Pilon C (2019). lifelines: survival analysis in Python. Journal "
+        "of Open Source Software 4(40), 1317.",
+        "Poelsterl S (2020). scikit-survival: a library for time-to-event analysis "
+        "built on top of scikit-learn. Journal of Machine Learning Research "
+        "21(212), 1-6.",
+    ])
 
 
 def write_provenance(provenance, RESULTS, stem):
@@ -2408,10 +3026,6 @@ def parse_args(argv=None):
                         help="Covariates the diagnostics ladder walks through "
                              "(default: --adjust-covariates if given, else age sex eor "
                              "mgmt; KPS is left out because two cohorts record none).")
-    parser.add_argument("--truncate-months", nargs="*", type=float, default=None, metavar="M",
-                        help="Horizons (months) for the diagnostics' administrative-truncation check "
-                             "(default: 12 24 36 48, kept only where both site groups "
-                             "are still under observation).")
     parser.add_argument("--format", type=str, default="pdf", choices=["pdf", "svg", "both"],
                         help="Figure format (default: pdf).")
     parser.add_argument("--show", action="store_true",
@@ -2594,6 +3208,24 @@ def assemble_database(args, main_dir, RESULTS, formats):
                 logHR_override=(pair_adjusted or {}).get("logHR"),
                 adjust_covariates=(list(args.adjust_covariates) if pair_adjusted else ()),
             )
+            # The same assessment the pooled comparison gets: the coefficient
+            # drawn on that figure is only as good as the model it came from,
+            # and a pair can fail proportional hazards where the pool does not
+            names_pair = f"{name_cohort[i]} vs {name_cohort[j]}"
+            pair = database[database["cohort"].isin([i, j])].copy()
+            pair["pair"] = pair["cohort"].map({i: 0, j: 1})
+            design, _, _ = build_site_design(pair, args.adjust_covariates)
+            ph_frame = pd.concat(
+                [design, pair[["pair"]],
+                 pd.to_numeric(pair["OS (days)"], errors="coerce").rename("OS (days)"),
+                 pd.to_numeric(pair["status"], errors="coerce").rename("status")],
+                axis=1).dropna()
+            ph_frame = ph_frame[ph_frame["OS (days)"] > 0]
+            subsection(f"Proportional hazards: {names_pair}")
+            assess_proportional_hazards(
+                ph_frame, RESULTS,
+                f"Site-effects_non-proportional-terms_{name_cohort[i]}-{name_cohort[j]}",
+                formats, label=names_pair, show_plot=args.show)
 
     # --- Diagnostics --------------------------------------------------------
     # Always, and before the correction is applied, so the evidence for the number
@@ -2656,6 +3288,11 @@ def assemble_database(args, main_dir, RESULTS, formats):
     provenance["recommended_outcome"] = report_recommendation(
         provenance, diagnostics, site_labels)
     write_provenance(provenance, RESULTS, stem)
+
+    # --- Method and references ----------------------------------------------
+    # The README says how to run the script; the reasoning behind what it does
+    # belongs with the numbers it produced, which is here.
+    report_method_and_references()
 
     # --- One report holding all of it ---------------------------------------
     REPORT.heading("Provenance")
