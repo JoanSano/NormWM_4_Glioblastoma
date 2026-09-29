@@ -36,7 +36,8 @@ if __name__ == '__main__':
     for tissue, column in keys.items():
         ts = tissue
         mask = nib.load(
-            glob.glob(f"{args.dir}/TDMaps_IDH1-{args.idh1}/{args.subject}/masks/*{ts}*")[0]
+            # Exact file name: a *{ts}* glob for "tissue-core" also matches tissue-core+enhancing
+            f"{args.dir}/TDMaps_IDH1-{args.idh1}/{args.subject}/masks/{args.subject}_{ts}.nii.gz"
         ).get_fdata()
         
         # Save result

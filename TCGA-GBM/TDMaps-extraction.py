@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser.add_argument("dir", type=str, help="Main irectory")
     parser.add_argument("subject", type=str, help="Full ID of the subject (e.g., UPENN-GBM-XXXXX_11)")
     parser.add_argument("idh1", type=str, choices=["WT", "MUT", "NOSNEC"], help="IDH1 mutation status")
-    parser.add_argument("--min_streamlines", type=int, default=10, help="Minimum number of streamlines per voxel to consider")
+    parser.add_argument("--min_streamlines", type=int, default=0, help="Minimum number of streamlines per voxel to consider")
     parser.add_argument("--tolerance", type=float, default=0.0001, help="Min size of the thresholded TD Map")
     parser.add_argument("--demographics", type=str, default="UPENN-GBM_clinical_info_v3.0.csv")
     args = parser.parse_args()

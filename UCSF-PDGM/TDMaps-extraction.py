@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("subject", type=str, help="Full ID of the subject (e.g., UCSF-PDGM-XXXX)")
     parser.add_argument("grade", type=str, choices=["II", "III", "IV"], help="Grade of the tumor")
-    parser.add_argument("--min_streamlines", type=int, default=10, help="Minimum number of streamlines per voxel to consider")
+    parser.add_argument("--min_streamlines", type=int, default=0, help="Minimum number of streamlines per voxel to consider")
     parser.add_argument("--tolerance", type=float, default=0.0001, help="Min size of the thresholded TD Map")
     args = parser.parse_args()
     subject_ID = rewrite_subjectID(args.subject)

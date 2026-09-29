@@ -9,12 +9,12 @@ STREAM_D_TH=0
 
 # Usage function
 usage() {
-  echo "Usage: $0 [-i idh] [-k keep_tck] [-d dec] [-n n]"
+  echo "Usage: $0 [-i idh] [-k keep_tck] [-d dec] [-n n] [-s s]"
   echo "  -i IDH         : Specify the IDH1 statatus to analyze (default: WT; options: WT, MUT, or NOSNEC)"
   echo "  -k KEEP_TCK    : Specify whether to keep the lesion tractograms (default: 1, options: 0, 1)"
   echo "  -d DEC         : Specify whether to compute directionally encoded TD maps (default: 0, options: 0, 1)"
   echo "  -n N           : Specify the number of subjects to parallelize (default: 1, options: 1, ..., N)"
-  echo "  -s STREAM_D_TH : Specify the minimum number of streamline density to threshold (default=10, option: 0, ...)"
+  echo "  -s STREAM_D_TH : Specify the minimum number of streamline density to threshold (default=0, option: 0, 10, ...)"
   exit 1
 }
 

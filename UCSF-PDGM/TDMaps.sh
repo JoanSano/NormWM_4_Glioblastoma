@@ -9,12 +9,12 @@ STREAM_D_TH=0
 
 # Usage function
 usage() {
-  echo "Usage: $0 [-g grade] [-k keep_tck] [-d dec] [-n n]"
+  echo "Usage: $0 [-g grade] [-k keep_tck] [-d dec] [-n n] [-s s]"
   echo "  -g GRADE       : Specify the grade to analyze (default: IV; options: II, III, or IV)"
   echo "  -k KEEP_TCK    : Specify whether to keep the lesion tractograms (default: 1, options: 0, 1)"
   echo "  -d DEC         : Specify whether to compute directionally encoded TD maps (default: 0, options: 0, 1)"
   echo "  -n N           : Specify the number of subjects to parallelize (default: 1, options: 1, ..., N)"
-  echo "  -s STREAM_D_TH : Specify the minimum number of streamline density to threshold (default=10, option: 0, ...)"
+  echo "  -s STREAM_D_TH : Specify the minimum number of streamline density to threshold (default=0, option: 0, 10, ...)"
   exit 1
 }
 
@@ -102,8 +102,8 @@ for lesion in $LESION_DIR/Grade-$GRADE/*; do
         if [[ ! -f $CREH ]]; then fslmaths $CR -add $EH -bin $CREH; fi
         
         # Execute Python script
-        #echo " INFO ${SUBJECT}: Computing lesion morphology metrics"
-        #python morphology-extraction.py $SUBJECT $GRADE >> $MORPHOLOGY
+        echo " INFO ${SUBJECT}: Computing lesion morphology metrics"
+        python morphology-extraction.py $SUBJECT $GRADE >> $MORPHOLOGY
 
         # Compute TDMaps and tracts for each tissue type sequentially
         tissues=("whole" "core" "nonenhancing" "enhancing" "core+enhancing")
