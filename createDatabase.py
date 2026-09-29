@@ -42,10 +42,10 @@ obtained is recorded in `<stem>_site-correction.json` next to the table.
 
 The evidence behind that choice is reported on every run -- covariate balance and
 missingness between the site groups, a same-sample adjustment ladder, a
-reverse-Kaplan-Meier follow-up comparison, an administrative-truncation check and
-a cohort-stratified Cox model. `--ladder-covariates` and `--truncate-months` shape
-it; nothing turns it off, because a correction whose justification is optional is
-a correction nobody checks.
+reverse-Kaplan-Meier follow-up comparison and an administrative-truncation check.
+`--ladder-covariates` and `--truncate-months` shape it; nothing turns it off,
+because a correction whose justification is optional is a correction nobody
+checks.
 
 Every figure and table the run produces, and the recommendation it ends with, are
 collected into a single self-contained `<stem>_report.html` next to the table, with
@@ -1322,18 +1322,6 @@ def fmt_p(p):
     return "  <0.001" if p < 0.001 else f"{p:8.3f}"
 
 
-def fmt_stat(x, decimals=4):
-    """A statistic, or a right-aligned placeholder when it could not be computed.
-
-    Args:
-        x: The value to format, or None/NaN.
-        decimals: Digits after the point; also sets the placeholder's width.
-    """
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return "n/a".rjust(decimals + 4)
-    return f"{x:.{decimals}f}"
-
-
 def section(title):
     """Print a top-level banner.
 
@@ -1776,71 +1764,6 @@ def truncation_sensitivity(data, horizons_months, covariates=(), site_col="site"
     return pd.DataFrame(rows)
 
 
-def stratified_cox_sensitivity(data, covariates, strata_col="cohort",
-                               duration_col="OS (days)", status_col="status",
-                               corrected_col="OS (days) - corrected"):
-    """The alternative to rescaling the outcome: a cohort-stratified baseline.
-
-    Args:
-        data: Table holding the strata, covariate and survival columns.
-        covariates: Keys of ADJUSTMENT_COVARIATES to fit. They enter one joint
-            model, so its rows are mutually adjusted effects on one complete-case
-            sample, not a univariate effect per covariate.
-        strata_col: Column whose levels get their own baseline hazard.
-        duration_col: Column holding the follow-up time, in days.
-        status_col: Column holding the 0/1 event indicator.
-        corrected_col: Column holding the corrected survival times. It is fitted
-            as a second outcome when present and skipped when it is not, so the
-            same function serves before and after the correction is applied.
-
-    Instead of dividing a fitted hazard ratio out of the survival times, the
-    between-cohort difference in baseline risk is left unmodelled and conditioned
-    out of the partial likelihood. Nothing is written back into the survival
-    column; what this reports is whether the clinical covariate effects survive
-    the stratification.
-
-    The same model is fitted on the raw and on the corrected column and the two
-    are expected to agree to every reported digit: the correction rescales time by
-    a constant within each cohort, and a stratified partial likelihood sees only
-    the *ordering* of times inside a stratum, which no monotone rescaling can
-    change. Reporting that identity is the point -- it is what makes stratification
-    and rescaling genuinely alternative rather than additive.
-    """
-    design, _, _ = build_site_design(data, covariates)
-    rows, notes = [], []
-    for column, tag in ((duration_col, "raw"), (corrected_col, "corrected")):
-        if column not in data.columns:
-            continue
-        frame = pd.concat([design, data[[strata_col]],
-                           pd.to_numeric(data[column], errors="coerce").rename(column),
-                           pd.to_numeric(data[status_col], errors="coerce").rename(status_col)],
-                          axis=1).dropna()
-        frame = frame[frame[column] > 0]
-        # A covariate one cohort never records is collinear with the stratum, so
-        # that stratum contributes no complete cases at all
-        kept = frame.groupby(strata_col)[status_col].sum()
-        empty = sorted(set(data[strata_col].dropna().unique()) - set(kept[kept > 0].index))
-        if empty:
-            note = f"strata contributing no complete cases dropped: {sorted(int(e) for e in empty)}"
-            if note not in notes:  # the same strata drop for both outcomes
-                notes.append(note)
-            frame = frame[frame[strata_col].isin(kept[kept > 0].index)]
-        model, reason = fit_cox(frame, column, status_col, strata=[strata_col])
-        if model is None:
-            rows.append(dict(outcome=tag, covariate="(model failed)", HR=np.nan,
-                             p=np.nan, n=len(frame), loglik=np.nan, reason=reason))
-            continue
-        for name in design.columns:
-            rows.append(dict(outcome=tag, covariate=name,
-                             coef=float(model.params_[name]),
-                             HR=float(model.summary.loc[name, "exp(coef)"]),
-                             p=float(model.summary.loc[name, "p"]),
-                             n=len(frame), loglik=float(model.log_likelihood_), reason=""))
-    table = pd.DataFrame(rows)
-    table.attrs["notes"] = notes
-    return table
-
-
 def plot_adjustment_ladder(ladder, RESULTS, stem, formats, show_plot=True,
                            title="Site log-HR under progressive adjustment"):
     """Forest plot of the ladder: log-HR with 95% CI, one row per rung.
@@ -1889,11 +1812,11 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
 
     Returns the tables as a dict, which is also what gets written as CSVs.
 
-    Prints, and writes as CSVs under OS-stats/, the balance and missingness table
-    between the two site groups, the same-sample adjustment ladder, the
-    reverse-Kaplan-Meier follow-up comparison, the administrative-truncation
-    sensitivity and the cohort-stratified Cox model. These are supplement tables
-    rather than lines in a log, so they are saved as well as shown.
+    Writes as CSVs under OS-stats/, and into the report, the balance and
+    missingness table between the two site groups, the same-sample adjustment
+    ladder, the reverse-Kaplan-Meier follow-up comparison and the
+    administrative-truncation sensitivity. These are supplement tables rather than
+    lines in a log, so they are saved as well as reported.
     """
     ladder_covariates = args.ladder_covariates or list(args.adjust_covariates) or DEFAULT_LADDER
     horizons = args.truncate_months if args.truncate_months is not None else [12, 24, 36, 48]
@@ -1978,45 +1901,6 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
     print("\nTruncating makes both groups equally observed by construction. An estimate")
     print("that barely moves across horizons is evidence the difference is not an")
     print("artefact of differing follow-up.")
-
-    subsection("Cohort-stratified Cox (the alternative to rescaling the outcome)")
-    # These diagnostics run before the correction is applied, so the corrected
-    # column does not exist yet. A provisional one is built here from the crude
-    # estimate purely to demonstrate the identity below; it is thrown away, and
-    # the column actually written to disk is the one apply_site_correction makes.
-    provisional = database.copy()
-    crude_logHR = ladder.loc[ladder["model"] == "crude (all subjects)", "logHR"]
-    factor = float(crude_logHR.iloc[0]) if len(crude_logHR) and pd.notna(crude_logHR.iloc[0]) else 0.0
-    provisional["OS (days) - corrected"] = (
-        provisional["OS (days)"] * np.exp(factor * provisional["site"])
-    )
-    stratified = stratified_cox_sensitivity(provisional, ladder_covariates)
-    out["stratified"] = stratified
-    if not stratified.empty:
-        # One precision per column rather than one for the table. coef, HR and the
-        # log-likelihood carry the raw-vs-corrected identity, which is only worth
-        # reporting if it holds to the last digit shown, so they keep six decimals
-        # -- which is also where a per-year or per-KPS-point effect lives. A count
-        # and a p-value never needed six: they get their own formatters.
-        six = lambda v: fmt_stat(v, 6)
-        REPORT.heading("Cohort-stratified Cox (the alternative to rescaling)", level=3)
-        REPORT.paragraph(
-            "One joint model per outcome, stratified by cohort: its rows are "
-            "mutually adjusted covariate effects on a single complete-case sample, "
-            "not a univariate effect per covariate. The raw and corrected rows are "
-            "expected to be identical to the last digit, since rescaling time by a "
-            "constant within a stratum cannot change the ordering a stratified "
-            "partial likelihood sees.")
-        REPORT.table(stratified, formatters=dict(
-            coef=six, HR=six, loglik=six, p=fmt_p, n=lambda v: f"{int(v):d}"))
-        print(stratified.to_string(index=False, na_rep="n/a", formatters=dict(
-            coef=six, HR=six, loglik=six, p=fmt_p, n=lambda v: f"{int(v):d}")))
-        for note in stratified.attrs.get("notes", []):
-            print(f"  {note}")
-        print("\nThe raw and corrected rows are expected to be identical: rescaling time")
-        print("by a constant within a stratum cannot change the ordering a stratified")
-        print("partial likelihood sees. That is what makes the two approaches")
-        print("alternatives rather than things to do together.")
 
     for name, table in out.items():
         if table is not None and not table.empty:
@@ -2133,9 +2017,9 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
             "adjustment for case-mix.")
         evidence.append(
             f"The adjusted confidence interval excludes 0 at alpha = {ALPHA}, so a "
-            f"difference remains after case-mix is held fixed. Cohort-stratified "
-            f"Cox is the equivalent alternative and needs no rescaling; pick one, "
-            f"never both, as the stratified table above shows why.")
+            f"difference remains after case-mix is held fixed. Stratifying the "
+            f"baseline hazard by cohort is the equivalent alternative and needs no "
+            f"rescaling at all; pick one of the two, never both.")
 
     # Caveats, which qualify either verdict
     if pd.notna(rung["ph_p"]) and rung["ph_p"] < ALPHA:

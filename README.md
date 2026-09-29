@@ -328,17 +328,15 @@ Every run produces these, in the HTML report and as CSVs under `OS-stats/`:
 | **Adjustment ladder** | How much of the site effect is case-mix? Every rung is fitted on *one fixed complete-case sample*, so rows differ only in what is adjusted for, never in who is in the model. Watch `logHR` shrink as covariates enter, and read `pct_of_crude_removed`. |
 | **Follow-up (reverse KM)** | Were the groups watched for equally long? Median *potential* follow-up, not median observed survival. A log-rank on the censoring distribution is reported beside it. |
 | **Administrative truncation** | Is the effect an artefact of unequal follow-up? Everyone is censored at a common horizon, which makes the groups equally observed by construction. An estimate that barely moves across horizons is not a follow-up artefact. |
-| **Cohort-stratified Cox** | The alternative to rescaling: leave the baseline hazard free per cohort instead of touching the outcome. Its rows are **mutually adjusted** covariate effects on one complete-case sample — not a univariate effect per covariate. The raw and corrected rows are identical by construction, which is what makes the two approaches alternatives rather than things to do together. |
 
 The forest plot of the ladder is the single most useful picture: if the site log-HR walks
 towards zero as covariates enter, the gap was case-mix.
 
 Hazard ratios are reported **per native unit** — one year of age, one KPS point — rather
 than rescaled to per-10 units, so a coefficient can be read straight against the column it
-came from. That puts the informative digits in the 2nd–3rd decimal, which is why the
-stratified table prints six: age reads `1.029380`, not `1.03`. Precision is set per column
-rather than per table, so counts stay integers and p-values keep their own notation
-(`<0.001`) instead of rounding to `0.000000`.
+came from. That puts the informative digits in the 2nd–3rd decimal, which is why the tables
+print four rather than two. Precision is set per column rather than per table, so counts
+stay integers and p-values keep their own notation (`<0.001`) instead of rounding away.
 
 ### Reading the figures
 
