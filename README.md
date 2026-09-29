@@ -413,6 +413,10 @@ If you use this code, consider the two methodological papers.
 > superior prognostic information across tumor compartments in glioblastoma. *medRxiv*.
 > https://doi.org/10.64898/2026.09.14.26362015
 
+**The TDI - definition, validation, and survival stratification:**
+
+> Salvalaggio, A., Pini, L., Gaiola, M., Velco, A., Giulio, S., Anglani, M., Fekonja, L., Chioffi, F., Picht, T., Thibeaut de Schotten, M., Zagonel, V., Lombardi, G., D'Avella, D., & Corbetta, M. (2023). White matter tract density index prediction model of overall survival in glioblastoma. *JAMA Neurology*, 80(11), 1222-1231. 10.1001/jamaneurol.2023.3284.
+
 <details>
 <summary>BibTeX</summary>
 
@@ -441,6 +445,20 @@ If you use this code, consider the two methodological papers.
   year    = {2026},
   doi     = {10.64898/2026.09.14.26362015}
 }
+ 
+@article{Salvalaggio2023,
+  author     = {Salvalaggio, Alessandro and Pini, Lorenzo and Gaiola, Matteo and Velco, Aron and Sansone, Giulio and Anglani, Mariagiulia and Fekonja, Lucius and Chioffi, Franco and Picht, Thomas and Thiebaut de Schotten, Michel and Zagonel, Vittorina and Lombardi, Giuseppe and D’Avella, Domenico and Corbetta, Maurizio},
+  journal    = {JAMA Neurology},
+  title      = {White Matter Tract Density Index Prediction Model of Overall Survival in Glioblastoma},
+  year       = {2023},
+  issn       = {2168-6149},
+  month      = nov,
+  number     = {11},
+  pages      = {1222--1231},
+  volume     = {80},
+  publisher  = {American Medical Association (AMA)},
+  doi        = {10.1001/jamaneurol.2023.3284}
+  }
 ```
 </details>
 
