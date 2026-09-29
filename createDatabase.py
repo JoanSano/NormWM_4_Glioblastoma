@@ -21,17 +21,17 @@ The site effect
 `site` is a two-group partition of the selected cohorts: group 0 is the reference,
 whose survival times are left untouched, and group 1's are multiplied by
 exp(log HR). Which cohorts form the reference is an input, not a property of the
-method -- it defaults to the `site` field of COHORTS (UCSF alone, the cohort whose
-survival was recorded differently) and `--site-reference` names any other group.
+method -- it defaults to the `site` field of COHORTS (UCSF alone) and
+`--site-reference` names any other group.
 The resolved partition is recorded in the provenance JSON, so a table always says
 which grouping produced it.
 
 By default the effect is estimated from the `site` indicator alone and the survival
-times of group 1 are multiplied by exp(log HR). That crude effect might
-be, however, not purely an artefact of how survival was recorded: the cohorts also 
-differ in case-mix, and MGMT methylation in particular is far commoner in UCSF-PDGM 
-than in the pooled remainder. `--adjust-covariates` therefore lets the site model 
-condition on any of age, sex, EOR, MGMT and KPS.
+times of group 1 are multiplied by exp(log HR). A crude effect mixes two things:
+a difference in how survival was recorded, which should be removed, and a
+difference in which patients each cohort enrolled, which is real prognostic
+information and should be kept. `--adjust-covariates` therefore lets the site
+model condition on any of age, sex, EOR, MGMT and KPS.
 
 The adjusted coefficient is estimated on the subjects reporting every chosen
 covariate and then applied to every subject, so the assembled table never
@@ -41,9 +41,10 @@ complete-case *table* would cost most of the sample. How the correction was
 obtained is recorded in `<stem>_site-correction.json` next to the table.
 
 The evidence behind that choice is reported on every run -- covariate balance and
-missingness between the site groups, a same-sample adjustment ladder, a
-reverse-Kaplan-Meier follow-up comparison and an estimate of how the site effect
-varies over follow-up time. `--ladder-covariates` shapes it.
+missingness between the site groups, a same-sample adjustment ladder,
+proportional-hazards tests for every term of the adjusted model (with the failing
+terms described over follow-up time) and a reverse-Kaplan-Meier follow-up
+comparison. `--ladder-covariates` shapes it.
 
 Every figure and table the run produces, and the recommendation it ends with, are
 collected into a single self-contained `<stem>_report.html` next to the table, with
