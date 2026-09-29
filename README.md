@@ -172,10 +172,8 @@ head to head.
 | `demographics-TDMaps_streamTH-<s>.csv` | TDI and L-TDI per subject and compartment, with the cohort's clinical fields | `TDMaps-extraction.py` |
 | `morphology-tissues.csv` | Compartment volumes per subject | `morphology-extraction.py` |
 
-`<s>` is the `-s` threshold, and **Step 3 must be given the same value** (`--stream-th`),
-or it will look for a file that does not exist. In UCSF-PDGM the call to
-`morphology-extraction.py` inside `TDMaps.sh` is commented out; uncomment it, or run the
-script separately, if `morphology-tissues.csv` is missing.
+`<s>` is the `-s` threshold (default 0 everywhere), and **Step 3 must be given the same
+value** (`--stream-th`, also default 0), or it will look for a file that does not exist.
 
 ---
 
