@@ -2181,7 +2181,11 @@ def plot_adjustment_ladder(ladder, RESULTS, stem, formats, show_plot=True,
     ax.errorbar(rows["logHR"], y,
                 xerr=[rows["logHR"] - rows["logHR_ci_low"],
                       rows["logHR_ci_high"] - rows["logHR"]],
-                fmt="o", color="tab:purple", ecolor="gray", capsize=3)
+                fmt="none", ecolor="black", capsize=3)
+    # Filled square when the 95% CI excludes 0, hollow otherwise.
+    significant = (rows["logHR_ci_low"] > 0) | (rows["logHR_ci_high"] < 0)
+    ax.scatter(rows["logHR"], y, marker="s", s=40, edgecolors="black", zorder=3,
+               facecolors=np.where(significant, "black", "white"))
     ax.axvline(0, color="black", linewidth=0.8, linestyle="--")
     ax.set_yticks(y)
     ax.set_yticklabels([f"{m}  (n={n})" for m, n in zip(rows["model"], rows["n"])], fontsize=9)
