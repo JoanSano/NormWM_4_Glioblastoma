@@ -1702,11 +1702,16 @@ def standardized_mean_difference(values, group):
         values: Covariate to compare, continuous or a 0/1 indicator.
         group: The 0/1 group indicator, aligned on the same index.
 
-    (m1 - m0) / sqrt((s0^2 + s1^2) / 2); for an indicator the same formula with
-    s^2 = p(1-p), which is the binary case of the same pooled-variance definition.
-    Unlike a p-value it does not shrink as n grows, so it measures imbalance rather
-    than the power to detect it. |SMD| above 0.10 is the conventional threshold for
-    an imbalance worth adjusting for.
+    |m1 - m0| / sqrt((s0^2 + s1^2) / 2), where m_g is the group mean and s_g^2
+    the unbiased (n - 1) sample variance of group g. An indicator goes through
+    the same formula: its mean is the proportion p and its unbiased variance is
+    p(1 - p) n / (n - 1), rather than the plug-in p(1 - p) of Austin (2009) --
+    one definition for both kinds of covariate, and the same SD the table's
+    mean (SD) column reports. The two variances are averaged unweighted, so the
+    larger group does not dominate the scale and equal variances are not
+    assumed. Unlike a p-value it does not shrink as n grows, so it measures
+    imbalance rather than the power to detect it. |SMD| above 0.10 is the
+    conventional threshold for an imbalance worth adjusting for.
     """
     a = pd.to_numeric(values[group == 0], errors="coerce").dropna()
     b = pd.to_numeric(values[group == 1], errors="coerce").dropna()
@@ -2707,12 +2712,18 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
     if not balance.empty:
         REPORT.heading("Balance and missingness between site groups", level=3)
         REPORT.paragraph(
-            "|SMD| > 0.10 marks an imbalance worth adjusting for. A covariate a "
-            "site never records cannot be balanced by any adjustment, so the two "
-            "pct_missing columns are read alongside the SMD.")
+            "SMD is the standardised mean difference: the difference between the "
+            "two site groups' means divided by their pooled standard deviation "
+            "(defined under Methods). For a categorical covariate it is computed "
+            "per level, on the 0/1 indicator of that level, so the means are "
+            "proportions. |SMD| > 0.10 marks an imbalance worth adjusting for. A "
+            "covariate a site never records cannot be balanced by any adjustment, "
+            "so the two pct_missing columns are read alongside the SMD.")
         REPORT.table(balance, float_format=lambda v: f"{v:.3f}")
         print(balance.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
-        print("\n|SMD| > 0.10 marks an imbalance worth adjusting for. A covariate a site")
+        print("\nSMD = standardised mean difference: |mean1 - mean0| / pooled SD, per level")
+        print("for a categorical covariate (so the means are proportions).")
+        print("|SMD| > 0.10 marks an imbalance worth adjusting for. A covariate a site")
         print("never records cannot be balanced by any adjustment -- read the two")
         print("pct_missing columns alongside the SMD.")
 
@@ -3462,8 +3473,24 @@ def report_method_and_references():
         "most of the sample. The transfer assumes the site effect is the same in "
         "complete and incomplete cases, which is an assumption doing real work; "
         "the balance table's missingness columns are the evidence to weigh it "
-        "against. Imbalance is measured by the standardised mean difference [7], "
-        "which unlike a p-value does not shrink as the sample grows.")
+        "against. Imbalance is measured by the standardised mean difference "
+        "(SMD) [7], which unlike a p-value does not shrink as the sample grows. "
+        "For a covariate with mean \\(\\bar{x}_g\\) and sample variance "
+        "\\(s_g^2\\) in site group \\(g\\),")
+    REPORT.equation(
+        r"\mathrm{SMD} = \frac{|\bar{x}_1 - \bar{x}_0|}"
+        r"{\sqrt{(s_0^2 + s_1^2)/2}},\qquad"
+        r" s_g^2 = \frac{1}{n_g - 1}\sum_{i \in g} (x_i - \bar{x}_g)^2.")
+    REPORT.paragraph(
+        "Each \\(s_g^2\\) is the unbiased sample variance, and the two are "
+        "averaged unweighted, so the larger group does not dominate the scale "
+        "and the groups are not assumed to share a variance. A categorical "
+        "covariate is compared one level at a time on the 0/1 indicator of that "
+        "level; \\(\\bar{x}_g\\) is then the proportion \\(p_g\\) and the "
+        "same formula gives \\(s_g^2 = p_g(1 - p_g)\\,n_g/(n_g - 1)\\) -- one "
+        "definition for both kinds of covariate, rather than the plug-in "
+        "\\(p_g(1 - p_g)\\) often used for proportions [7], from which it differs "
+        "only by \\(n_g/(n_g - 1)\\).")
 
     REPORT.heading("Proportional hazards, and what is done when it fails", level=3)
     REPORT.paragraph(
