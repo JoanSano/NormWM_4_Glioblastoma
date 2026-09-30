@@ -232,6 +232,10 @@ Connectomes.sh
 Graph-metrics.sh
 Network-metrics.py
 Graph-metrics_models.ipynb
+# Feature-selectable database assembly (clinical + TD / volumes / graph metrics).
+# Un-ignore both to publish; the script then supersedes createDatabase.py
+createDatabase_graph-metrics.py
+utils/database/graph_metrics.py
 
 # UMAP analysis
 umap-config_metrics-include.py
