@@ -59,6 +59,7 @@ LESION_DIR="${MAIN_DIR}/UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM_segmentation"
 DESTINATION_MAPS="${MAIN_DIR}/TDMaps_Grade-${GRADE}"
 DEMOGRAPHICS="${DESTINATION_MAPS}/demographics-TDMaps_streamTH-${STREAM_D_TH}.csv"
 MORPHOLOGY="${DESTINATION_MAPS}/morphology-tissues.csv"
+CLINICAL_DATA_FILE="UCSF-PDGM-metadata_v3.csv"
 
 if [[ ! -d $DESTINATION_MAPS ]]; then
     mkdir $DESTINATION_MAPS
@@ -107,7 +108,7 @@ for lesion in $LESION_DIR/Grade-$GRADE/*; do
         
         # Execute Python script
         echo " INFO ${SUBJECT}: Computing lesion morphology metrics"
-        python morphology-extraction.py $SUBJECT $GRADE >> $MORPHOLOGY
+        python morphology-extraction.py $MAIN_DIR $SUBJECT $GRADE --demographics $CLINICAL_DATA_FILE >> $MORPHOLOGY
 
         # Compute TDMaps and tracts for each tissue type sequentially
         tissues=("whole" "core" "nonenhancing" "enhancing" "core+enhancing")
@@ -160,7 +161,7 @@ for lesion in $LESION_DIR/Grade-$GRADE/*; do
 
         # Execute Python script
         echo " INFO ${SUBJECT}: Computing Tract density metrics"
-        python TDMaps-extraction.py $SUBJECT $GRADE --min_streamlines $STREAM_D_TH >> $DEMOGRAPHICS
+        python TDMaps-extraction.py $MAIN_DIR $SUBJECT $GRADE --min_streamlines $STREAM_D_TH --demographics $CLINICAL_DATA_FILE >> $DEMOGRAPHICS
         
         if [[ $KEEP_TCK -eq 0 ]]; then
             echo " INFO ${SUBJECT}: Deleting lesion tracts!"

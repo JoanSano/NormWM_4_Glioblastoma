@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import nibabel as nib
 import argparse
-import glob
 import os
 
 def rewrite_subjectID(subject_ID):
@@ -14,17 +13,23 @@ def rewrite_subjectID(subject_ID):
 if __name__ == '__main__':
     # Get the subject to process
     parser = argparse.ArgumentParser()
+    parser.add_argument("dir", type=str, help="Main directory")
     parser.add_argument("subject", type=str, help="Full ID of the subject (e.g., UCSF-PDGM-XXXX)")
     parser.add_argument("grade", type=str, choices=["II", "III", "IV"], help="Grade of the tumor")
     parser.add_argument("--min_streamlines", type=int, default=0, help="Minimum number of streamlines per voxel to consider")
     parser.add_argument("--tolerance", type=float, default=0.0001, help="Min size of the thresholded TD Map")
+    parser.add_argument("--demographics", type=str, default="UCSF-PDGM-metadata_v3.csv")
     args = parser.parse_args()
     subject_ID = rewrite_subjectID(args.subject)
 
     # Loading the metadata that is available in the demographics
-    demographics = pd.read_csv(f"../data/UCSF-PDGM-metadata_v3.csv")
+    args.dir = args.dir[:-1] if args.dir[-1]=="/" else args.dir # We delete the last "/" if present
+    demographics = pd.read_csv(f"{args.dir}/data/{args.demographics}")
+
     # We preselect only the current working subject
     row = pd.DataFrame(demographics.loc[demographics["ID"]==subject_ID])
+    if row.empty:
+        raise Warning("______ No entry for the subject was found in the clinical data entered in --demographics ______")
     keys = { 
         # Do not alter the order of these entries, they are in correspondance to the TDMaps.sh script
         "tissue-whole_TDMap": "Whole TDMap",
@@ -42,7 +47,7 @@ if __name__ == '__main__':
     # We compute and add the Tract Density (TD) metrics
     for tissue, column in keys.items():
         # Load the files in the correct order
-        file = f"../TDMaps_Grade-{args.grade}/{args.subject}/maps/{args.subject}_{tissue}.nii.gz"
+        file = f"{args.dir}/TDMaps_Grade-{args.grade}/{args.subject}/maps/{args.subject}_{tissue}.nii.gz"
         if os.path.exists(file):
             # The TD map was created correctly
             td_map = nib.load(file).get_fdata()
@@ -58,7 +63,7 @@ if __name__ == '__main__':
             # Average TDI --> We need to mask and only count contributions within the lesion & tissue mask
             elif "TDMap" in file: 
                 ts = tissue.split("_")[0]
-                mask = nib.load(f"../TDMaps_Grade-{args.grade}/{args.subject}/masks/{args.subject}_{ts}.nii.gz").get_fdata()
+                mask = nib.load(f"{args.dir}/TDMaps_Grade-{args.grade}/{args.subject}/masks/{args.subject}_{ts}.nii.gz").get_fdata()
                 if mask.sum()<1:
                     # Smaller than a voxel --> There is no tissue!
                     tdi = np.nan

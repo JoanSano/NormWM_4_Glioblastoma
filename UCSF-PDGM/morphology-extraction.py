@@ -1,8 +1,6 @@
-import numpy as np
 import pandas as pd
 import nibabel as nib
 import argparse
-import glob
 
 def rewrite_subjectID(subject_ID):
     subject_4digits = subject_ID.split("-")
@@ -13,15 +11,21 @@ def rewrite_subjectID(subject_ID):
 if __name__ == '__main__':
     # Get the subject to process
     parser = argparse.ArgumentParser()
+    parser.add_argument("dir", type=str, help="Main directory")
     parser.add_argument("subject", type=str, help="Full ID of the subject (e.g., UCSF-PDGM-XXXX)")
     parser.add_argument("grade", type=str, choices=["II", "III", "IV"], help="Grade of the tumor")
+    parser.add_argument("--demographics", type=str, default="UCSF-PDGM-metadata_v3.csv")
     args = parser.parse_args()
     subject_ID = rewrite_subjectID(args.subject)
 
     # Loading the metadata that is available in the demographics
-    demographics = pd.read_csv(f"../data/UCSF-PDGM-metadata_v3.csv")
+    args.dir = args.dir[:-1] if args.dir[-1]=="/" else args.dir # We delete the last "/" if present
+    demographics = pd.read_csv(f"{args.dir}/data/{args.demographics}")
+
     # We preselect only the current working subject
     row = pd.DataFrame(demographics.loc[demographics["ID"]==subject_ID])
+    if row.empty:
+        raise Warning("______ No entry for the subject was found in the clinical data entered in --demographics ______")
     keys = { 
         # Do not alter the order of these entries, they are in correspondance to the TDMaps.sh script
         "tissue-whole": "Whole tumor size (voxels)",
@@ -36,7 +40,7 @@ if __name__ == '__main__':
         ts = tissue.split("_")[0]
         mask = nib.load(
             # Exact file name: a *{ts}* glob for "tissue-core" also matches tissue-core+enhancing
-            f"../TDMaps_Grade-{args.grade}/{args.subject}/masks/{args.subject}_{ts}.nii.gz"
+            f"{args.dir}/TDMaps_Grade-{args.grade}/{args.subject}/masks/{args.subject}_{ts}.nii.gz"
         ).get_fdata()
         
         # Save result
