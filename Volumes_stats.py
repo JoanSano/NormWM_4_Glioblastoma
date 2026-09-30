@@ -45,7 +45,7 @@ def sig_marker(p):
 
 ####################################################################################################################################################################
 ## General processing
-## Example command --> python Volumes_stats.py /home/joan/Desktop/PROJECTS/Glioblastomas/RESULTS-GBM_4-cohorts_Tissues/ Tumor-volumes_Tissue-types data-clinical_TD-tissues_4-cohorts.csv --format pdf --cohort -1
+## Example command --> python Volumes_stats.py /home/joan/Desktop/PROJECTS/Glioblastomas/RESULTS-GBM_4-cohorts_Tissues/ Tumor-volumes_Tissue-types data-clinical_TD-tissues_4-cohorts.csv --format pdf --cohort -1 --duration-col "OS (days)"
 ####################################################################################################################################################################
 parser = argparse.ArgumentParser()
 parser.add_argument("path", type=str, help="Path to the directory where the volume and survival data are stored")
@@ -53,6 +53,8 @@ parser.add_argument("results_folder", type=str, help="Name of the folder where t
 parser.add_argument("data", type=str, help="Name of the CSV file with the data")
 parser.add_argument("--format", type=str, default='pdf', choices=['pdf','svg'], help="Output figure format")
 parser.add_argument("--cohort", type=int, default=-1, choices=[-1,0,1,2,3,4], help="{-1: all cohorts, 0: UCSF, 1: UPENN, 2: TCGA, 3: RHUH, 4: UPENN + TCGA + RHUH}")
+parser.add_argument("--duration-col", type=str, required=True, help="Survival column, e.g. 'OS (days)' or 'OS (days) - corrected'")
+parser.add_argument("--event-col", type=str, default="status", help="Event indicator column (default: status)")
 args = parser.parse_args()
 
 results_folder = args.results_folder
@@ -79,14 +81,17 @@ if args.cohort in range(4):
     data_o = data_o.loc[
         data_o["cohort"]==args.cohort
     ].copy()
-    duration_col = "OS (days) - corrected"
 elif args.cohort==4: # UPENN + TCGA + RHUH
     data_o = data_o.loc[
         data_o["cohort"]>0
     ].copy()
-    duration_col = "OS (days)"
-else:
+elif args.cohort != -1: # -1: all cohorts
     raise ValueError("Unknown cohort naming: ")
+duration_col = args.duration_col
+for col in (duration_col, args.event_col):
+    if col not in data_o.columns:
+        raise KeyError(f"Column {col!r} is not in {args.data}")
+print(f"Survival column: {duration_col!r} | Event column: {args.event_col!r} | N = {len(data_o)}")
 
 VolSizes = data_o[
     [
@@ -106,7 +111,7 @@ VolSizes = data_o[
         }
     )
 VolSizes["C+E.size"] = VolSizes["E.size"].values + VolSizes["C.size"]
-life = data_o["status"].values
+life = data_o[args.event_col].values
 
 # Change units to cm3
 VolSizes["W.size"] = VolSizes["W.size"] * voxel_size

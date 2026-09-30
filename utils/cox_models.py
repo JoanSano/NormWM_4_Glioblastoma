@@ -175,29 +175,6 @@ def draw_forest(ax, model, labels, title):
 # ---------------------------------------------------------------------------
 # Leave-one-cohort-out validation
 # ---------------------------------------------------------------------------
-def cv_duration_column(data, duration_col, stratify_for):
-    """Survival column for the cross-validation, which never stratifies.
-
-    Args:
-        data: Source table.
-        duration_col: Survival column of the in-sample models.
-        stratify_for: Stratification column of the in-sample models, or None.
-
-    A held-out cohort would be a stratum without a baseline hazard, and the AFT
-    fitters take no strata. When the in-sample models stratify by cohort or site,
-    the site difference is instead handled by the site-corrected survival, if the
-    table has it. Either way a warning says what was done.
-    """
-    if stratify_for not in ("cohort", "site"):
-        return duration_col
-    if CORRECTED_DURATION in data.columns:
-        warnings.warn(f"stratify_for={stratify_for!r} is not applied in cross-validation; "
-                      f"using the site-corrected survival {CORRECTED_DURATION!r} instead.")
-        return CORRECTED_DURATION
-    warnings.warn(f"stratify_for={stratify_for!r} is not applied in cross-validation and no "
-                  f"site-corrected survival column is present; using {duration_col!r} unadjusted.")
-    return duration_col
-
 
 CV_FITTERS = {
     "Cox": lambda: CoxPHFitter(baseline_estimation_method="breslow"),

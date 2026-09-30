@@ -392,12 +392,13 @@ the assembled table:
 python LTDIndices_stats.py  /path/to/RESULTS-GBM_4-cohorts_Tissues/ \
                             LesionTract-density_Tissue-types \
                             data-clinical_TD-tissues_4-cohorts.csv \
-                            --format pdf --cohort -1
+                            --format pdf --cohort -1 --duration-col "OS (days)"
 ```
 
 `--cohort` selects the cohort to analyse (`-1` for all; see `--help` for the mapping), and
-`--format` chooses `pdf` or `svg` figures. `TDIndices_stats.py` and `Volumes_stats.py`
-take the same arguments. The notebooks run in the order of the table above.
+`--format` chooses `pdf` or `svg` figures. `--duration-col` (required) names the survival
+column, `OS (days)` or `OS (days) - corrected`, and `--event-col` the event indicator (default
+`status`). `TDIndices_stats.py` and `Volumes_stats.py` take the same arguments. The notebooks run in the order of the table above.
 
 `LTDI-Volume_comparison.py` takes the project root and the Step 3 output directory. It
 fits Cox models in three blocks:
@@ -419,11 +420,12 @@ python LTDI-Volume_comparison.py /path/to/main/dir \
 ```
 
 Three flags change the results:
-- `--duration-col` selects the column holding the event times.
+- `--duration-col` (required) selects the column holding the event times, in both the
+  in-sample models and the cross-validation.
 - `--stratify-for` stratifies every in-sample Cox model by a column (default `cohort`; `none`
   switches it off).
-  - The cross-validation never stratifies. When stratifying by `cohort` or `site`, it uses
-    the site-corrected survival instead, and warns.
+  - The cross-validation never stratifies: a held-out cohort would be a stratum without a
+    baseline hazard, and the AFT fitters take no strata.
   - With strata nested within sites, the site correction leaves the Cox coefficients
     unchanged; it only moves the pooled C-index.
 - `--standardize` switches the covariate units.

@@ -20,10 +20,10 @@ contrast-enhancing volume in cm3.
 
 Settings that change the results
 --------------------------------
---duration-col   raw or site-corrected survival (see createDatabase.py's recommendation).
+--duration-col   required: raw or site-corrected survival (see createDatabase.py's
+                 recommendation). The cross-validation analyses the same column.
 --stratify-for   stratify every in-sample Cox model by a column (default: cohort), or
-                 `none`. The cross-validation never stratifies; when this is cohort or
-                 site it analyses the site-corrected survival instead, and warns.
+                 `none`. The cross-validation never stratifies.
 --standardize    z-score continuous covariates (HR per SD) and map categorical codes
                  onto [-1, 1]. Estimated on each model's own sample, and in the
                  cross-validation on the training cohorts only.
@@ -39,9 +39,10 @@ side by side in the output folder:
 
 Examples
 --------
-    # Defaults: stratified by cohort, native units
+    # Defaults: stratified by cohort, native units, raw survival
     python LTDI-Volume_comparison.py /home/joan/Desktop/PROJECTS/Glioblastomas \
-                                     RESULTS-GBM_4-cohorts_Tissues
+                                     RESULTS-GBM_4-cohorts_Tissues \
+                                     --duration-col "OS (days)"
 
     # Unstratified, standardized covariates, raw survival
     python LTDI-Volume_comparison.py /home/joan/Desktop/PROJECTS/Glioblastomas \
@@ -53,7 +54,6 @@ Examples
 import argparse
 import os
 import sys
-import warnings
 from datetime import datetime
 
 import matplotlib
@@ -66,7 +66,7 @@ import pandas as pd  # noqa: E402
 
 from utils import runlog  # noqa: E402
 from utils.cox_models import (  # noqa: E402
-    CORRECTED_DURATION, coefficient_table, cox_frame, cv_duration_column, draw_forest,
+    CORRECTED_DURATION, coefficient_table, cox_frame, draw_forest,
     fit_cox, leave_one_cohort_out,
 )
 from utils.database.config import COHORT_NAME_BY_ID, KEYS_MAPS  # noqa: E402
@@ -116,9 +116,9 @@ def parse_args(argv=None):
                         help="Pooled table inside RESULTS_DIR.")
     parser.add_argument("--output-dir", type=str, default="Forest-plots_Cox-models",
                         help="Folder under RESULTS_DIR the figures, tables and report go to.")
-    parser.add_argument("--duration-col", type=str, default=CORRECTED_DURATION,
-                        help="Survival column. Use the one createDatabase.py recommended "
-                             f"(default: {CORRECTED_DURATION!r}).")
+    parser.add_argument("--duration-col", type=str, required=True,
+                        help="Survival column, also of the cross-validation. Use the one "
+                             f"createDatabase.py recommended: 'OS (days)' or {CORRECTED_DURATION!r}.")
     parser.add_argument("--event-col", type=str, default="status",
                         help="Event indicator column (default: status).")
     parser.add_argument("--stratify-for", type=str, default="cohort",
@@ -314,19 +314,15 @@ class Analysis:
         } for row in rows])
         r.table(table, caption=f"Fit of the {block.lower()} models.")
 
-    def cross_validation(self, cv_duration):
-        """Leave-one-cohort-out validation of the pre-surgical marker sets.
-
-        Args:
-            cv_duration: Survival column the validation analyses.
-        """
+    def cross_validation(self):
+        """Leave-one-cohort-out validation of the pre-surgical marker sets."""
         section("Leave-one-cohort-out validation")
         a = self.args
         sets = [[*BLOCKS["Pre-surgical"][1], m] for m in MARKERS] + [BLOCKS["Pre-surgical"][1]]
         frames = []
         for covs in sets:
             name = "Age + Sex" + "".join(f" + {SHORT[c]}" for c in covs if c in MARKERS)
-            cv = leave_one_cohort_out(self.data, covs, cv_duration, a.event_col, a.standardize,
+            cv = leave_one_cohort_out(self.data, covs, a.duration_col, a.event_col, a.standardize,
                                       CONTINUOUS, CATEGORICAL)
             cv.insert(0, "covariates", name)
             frames.append(cv)
@@ -349,7 +345,7 @@ class Analysis:
         r.heading("Leave-one-cohort-out validation")
         r.paragraph(
             "Each model is fitted on all cohorts but one and scored on the one left out, "
-            f"analysing {cv_duration!r} without strata. "
+            f"analysing {a.duration_col!r} without strata. "
             + ("Standardization is estimated on the training cohorts and applied unchanged "
                "to the held-out cohort. " if a.standardize else "")
             + "Cells are held-out C-indices. Mean, SD and Min summarise them across the "
@@ -378,14 +374,6 @@ def run(args, data, out_dir, tag, log_path):
     analysis = Analysis(args, data, out_dir, tag)
     r = analysis.report
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", UserWarning)
-        cv_duration = cv_duration_column(data, args.duration_col, args.stratify_for)
-    cv_warnings = [str(w.message) for w in caught]
-    for message in cv_warnings:
-        print(f"WARNING: {message}")
-        print(f"WARNING: {message}", file=sys.stderr)
-
     # --- Settings ------------------------------------------------------------
     r.heading("Run settings")
     hr_units = ("continuous covariates per SD; categorical codes on [-1, 1] (sex ±1, MGMT and "
@@ -398,7 +386,7 @@ def run(args, data, out_dir, tag, log_path):
         ("Event column", args.event_col),
         ("Stratification (in-sample Cox)", args.stratify_for or "none"),
         ("Standardization", f"{'on' if args.standardize else 'off'} — HRs in {hr_units}"),
-        ("Survival column (cross-validation)", f"{cv_duration} (never stratified)"),
+        ("Cross-validation", "same survival column, never stratified"),
         ("Bootstrap resamples / seed", f"{args.n_bootstrap} / {args.seed}"),
         ("File tag", tag),
     ], columns=["Setting", "Value"]))
@@ -408,8 +396,6 @@ def run(args, data, out_dir, tag, log_path):
             f"{args.stratify_for}. The correction rescales every time in a stratum by the same "
             "factor, which leaves the within-stratum ordering, and hence the Cox coefficients, "
             "unchanged; it only moves the C-index, which is pooled across strata.")
-    for message in cv_warnings:
-        r.callout(message)
     r.paragraph(
         "Terms. HR: hazard ratio, exp(β), the multiplicative change in the hazard per unit of "
         "the covariate (above 1 means shorter survival). 95% CI: Wald confidence interval. "
@@ -424,7 +410,7 @@ def run(args, data, out_dir, tag, log_path):
     analysis.head_to_head()
     for block in BLOCKS:
         analysis.nested_block(block)
-    cv = analysis.cross_validation(cv_duration)
+    cv = analysis.cross_validation()
 
     # --- Tables and report ---------------------------------------------------
     stem = f"{out_dir}/LTDI-Volume_comparison_{tag}"
