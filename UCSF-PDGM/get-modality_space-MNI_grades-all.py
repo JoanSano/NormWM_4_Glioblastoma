@@ -8,7 +8,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--modality", type=str, choices=["FLAIR_bias", "segmentation", "T2_bias", "T1c_bias", "T1_bias"], help="Modality to collect and reogranize", default="segmentation")
-parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/sano/Documents/Joan/Data/Glioblastoma_UCSF-PDGM-v3-20230111")
+parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111")
 parser.add_argument("--modality_dir", type=str, help="Directory where the data to collect is stored", default="UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM")
 args = parser.parse_args()
 

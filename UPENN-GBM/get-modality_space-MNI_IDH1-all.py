@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--modality", type=str, choices=["automated_approx_segm", "corrected_segm", "FLAIR", "T1", "T1GD", "T2"], help="Modality to collect and reogranize", default="segmentation")
-parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024")
+parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024")
 parser.add_argument("--modality_dir", type=str, help="Directory where the data to collect is stored", default="UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM")
 args = parser.parse_args()
 

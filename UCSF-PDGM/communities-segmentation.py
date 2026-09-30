@@ -18,7 +18,7 @@ from Qommunity.samplers.regular.louvain_sampler import LouvainSampler
 from iterative_searcher.iterative_searcher import IterativeSearcher
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--mni_dir", type=str, help="Location of the MNI registration template", default="/home/sano/Documents/Joan/Data/MNI_ICBM_2009b_NLIN_ASYM")
+parser.add_argument("--mni_dir", type=str, help="Location of the MNI registration template", default="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM")
 parser.add_argument("--th", type=float, help="Threshold to count the overlap as real", default=0.1)
 parser.add_argument("--tissue", type=str, help="Tissue type to analyze", choices=["Whole-tumor", "Non-enhancing", "Enhancing", "Core"], default="Whole-tumor")
 parser.add_argument("--min_size_community", type=int, help="Minimum size of the community to include in the analysis", default=20)

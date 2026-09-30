@@ -2,9 +2,9 @@
 
 # Define base paths
 CONTRAST="T2"
-BASE_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UCSF-PDGM-v3-20230111"
-MNI_TEMPLATE="/home/sano/Documents/Joan/Data/MNI_ICBM_2009b_NLIN_ASYM/${CONTRAST}_0.5mm_brain"
-MNI_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UCSF-PDGM-v3-20230111/UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM"
+BASE_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111"
+MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/${CONTRAST}_0.5mm_brain"
+MNI_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111/UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM"
 if [[ -d "$MNI_DIR" ]]; then
     echo "MNI directory already exists"
 else

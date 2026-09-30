@@ -189,9 +189,9 @@ def plot_lesions(lesions, mni_img, fig_folder, title, Nslices=20):
  
 parser = argparse.ArgumentParser()
 parser.add_argument("modalities", nargs="+", help="Modalities to check")
-parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/sano/Documents/Joan/Data/Glioblastoma_UCSF-PDGM-v3-20230111")
+parser.add_argument("--main_dir", type=str, help="Main data directory", default="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UCSF-PDGM_v3-20230111")
 parser.add_argument("--modality_prefix", type=str, help="Directory where the data to collect is stored", default="UCSF-PDGM-v3_MNI-ICBM-2009b-NLIN-ASYM")
-parser.add_argument("--mni_dir", type=str, help="Location of the MNI registration template", default="/home/sano/Documents/Joan/Data/MNI_ICBM_2009b_NLIN_ASYM")
+parser.add_argument("--mni_dir", type=str, help="Location of the MNI registration template", default="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM")
 parser.add_argument("--test", action='store_true', help="Include this flag for testing on a single subject")
 parser.add_argument("--metadata", type=str, help="Name of the clinical data file", default="UCSF-PDGM-metadata_v3.csv")
 args = parser.parse_args()
