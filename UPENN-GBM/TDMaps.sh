@@ -51,8 +51,8 @@ while getopts ":i:k:d:n:s:h" opt; do
 done
 
 # Define base paths
-MAIN_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024"
-MNI_TEMPLATE="/home/sano/Documents/Joan/Data/MNI_ICBM_2009b_NLIN_ASYM/dTOR_full_tractogram"
+MAIN_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024"
+MNI_TEMPLATE="/home/joan/Documents/MNI_ICBM_2009b_NLIN_ASYM/dTOR_full_tractogram"
 LESION_DIR="${MAIN_DIR}/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM_automated_approx_segm"
 CORRECTED_LESION_DIR="${MAIN_DIR}/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM_corrected_segm"
 DESTINATION_MAPS="${MAIN_DIR}/TDMaps_IDH1-${IDH}"

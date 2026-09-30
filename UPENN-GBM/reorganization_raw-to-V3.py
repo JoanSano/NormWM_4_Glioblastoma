@@ -4,7 +4,7 @@ import os
 import glob
 import shutil
 
-root = "/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024"
+root = "/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024"
 destination = os.path.join(root, "UPENN-GBM_data-raw_V3-organized")
 raw_loc = os.path.join(root, "UPENN-GBM_data-raw_V2/NIfTI-files")
 

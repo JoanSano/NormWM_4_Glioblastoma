@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Define base paths
-BASE_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024"
-MNI_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM"
-TARGET_DIR="/home/sano/Documents/Joan/Data/Glioblastoma_UPENN-GBM_v2-20221024/UPENN-GBM_data-raw_V3-organized_tmp-copy"
+BASE_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024"
+MNI_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024/UPENN-GBM_MNI-ICBM-2009b-NLIN-ASYM"
+TARGET_DIR="/home/joan/Desktop/PROJECTS/Glioblastomas/Glioblastoma_UPENN-GBM_v2-20221024/UPENN-GBM_data-raw_V3-organized_tmp-copy"
 FILE="${MNI_DIR}/registered-subjects.txt"
 if [[ -d "$TARGET_DIR" ]]; then
     echo "Target directory directory already exists"
