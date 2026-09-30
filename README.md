@@ -375,7 +375,7 @@ Practical consequences:
 | Entry point | Question it answers |
 |---|---|
 | `TDIndices_stats.py`, `LTDIndices_stats.py`, `Volumes_stats.py` | Per-compartment univariate survival statistics for TDI, L-TDI and volume |
-| `LTDI-Volume_comparison.ipynb` | Is L-TDI or tumour volume the better prognostic marker, pre- and post-surgery? |
+| `LTDI-Volume_comparison.py` | Is L-TDI or tumour volume the better prognostic marker, pre- and post-surgery? |
 | `multivariate_survival.ipynb` | Cox models with clinical covariates; equivalence of L-TDI to TDI + volume |
 | `anatomical_TractDensityMarkers.ipynb` | Anatomical localisation of the markers; site effects across cohorts |
 
@@ -399,6 +399,47 @@ python LTDIndices_stats.py  /path/to/RESULTS-GBM_4-cohorts_Tissues/ \
 `--format` chooses `pdf` or `svg` figures. `TDIndices_stats.py` and `Volumes_stats.py`
 take the same arguments. The notebooks run in the order of the table above.
 
+`LTDI-Volume_comparison.py` takes the project root and the Step 3 output directory. It
+fits Cox models in three blocks:
+- **Head to head:** pairs of markers in one model.
+- **Pre-surgical:** age + sex, alone and with each marker added.
+- **Post-surgical:** the same, with MGMT and extent of resection added.
+
+Within each block, every marker model is compared with the base model by AIC and a
+likelihood-ratio test. The pre-surgical marker sets are then validated by leaving one
+cohort out at a time, with a Cox and two accelerated-failure-time fitters. The held-out
+C-indices are summarised across cohorts by their mean, their sample standard deviation
+(n − 1) and the worst cohort's value, so a marker set that discriminates well on average
+but poorly in one cohort shows up.
+
+```bash
+python LTDI-Volume_comparison.py /path/to/main/dir \
+                                 RESULTS-GBM_4-cohorts_Tissues \
+                                 --stratify-for cohort --duration-col "OS (days) - corrected"
+```
+
+Three flags change the results:
+- `--duration-col` chooses column in which event times are stored.
+- `--stratify-for` stratifies every in-sample Cox model by a column (default `cohort`; `none`
+  switches it off).
+  - The cross-validation never stratifies. When stratifying by `cohort` or `site`, it uses
+    the site-corrected survival instead, and warns.
+  - With strata nested within sites, the site correction leaves the Cox coefficients
+    unchanged; it only moves the pooled C-index.
+- `--standardize` switches the covariate units.
+  - Continuous covariates become z-scores (HR per SD), and categorical codes are mapped onto
+    [-1, 1].
+  - In the cross-validation, both scalings are estimated on the training cohorts only.
+
+Every output goes to `<RESULTS>/Forest-plots_Cox-models/` (`--output-dir`), and every file
+name ends in a tag of the settings, `strata-<column|none>_standardized-<true|false>`. Runs
+with different settings therefore sit side by side instead of overwriting one another. The
+outputs are:
+- one forest plot per model (non-significant hazard ratios filled salmon);
+- CSV tables of coefficients, model fit and cross-validation;
+- a log;
+- a short HTML report that opens with the settings of the run.
+
 Before running Step 4, check which survival column
 [Step 3 recommended](#choosing-raw-or-corrected-survival) and point the analyses at it.
 
@@ -421,7 +462,7 @@ Before running Step 4, check which survival column
 ├── TDIndices_stats.py              #   Step 4: statistics and modelling
 ├── LTDIndices_stats.py
 ├── Volumes_stats.py
-├── LTDI-Volume_comparison.ipynb
+├── LTDI-Volume_comparison.py       #           L-TDI vs volume Cox models, report (CLI)
 ├── multivariate_survival.ipynb
 ├── anatomical_TractDensityMarkers.ipynb
 │
@@ -430,6 +471,7 @@ Before running Step 4, check which survival column
 │   ├── metrics.py                  # survival metrics, quantile OS, concordance
 │   ├── statistics.py               # BB procedure, bootstrap/permutation tests, DeLong
 │   ├── survival.py                 # Kaplan-Meier curves, at-risk tables, risk-set helpers
+│   ├── cox_models.py               # Cox design frames, forest plots, leave-one-cohort-out validation
 │   ├── formatting.py               # p-value formatting and log banners
 │   ├── report.py                   # self-contained HTML report
 │   ├── runlog.py                   # quiet runs: stdout to a log file

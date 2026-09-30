@@ -231,18 +231,23 @@ _REPORT_HEAD = """<!DOCTYPE html>
 </head><body><main>"""
 
 
-def save_figure(fig, results, stem, formats):
-    """Write one figure to `results`/OS-stats/ once per requested format.
+def save_figure(fig, results, stem, formats, subdir="OS-stats", report=REPORT, caption=None):
+    """Write one figure to `results`/`subdir`/ once per requested format.
 
     Args:
         fig: Matplotlib figure to write.
-        results: Results directory; its OS-stats/ subdirectory must already exist.
+        results: Results directory; its `subdir` subdirectory must already exist.
         stem: File name without extension.
         formats: Extensions to write, e.g. ("pdf", "svg").
+        subdir: Subdirectory of `results` the files go to.
+        report: Report the figure is captured into, or None to capture it nowhere
+            (a panel written for the manuscript that the report shows as a grid).
+        caption: Caption in the report; defaults to `stem`.
 
     The figure is also captured for the HTML report, which is why this is the only
     place figures are written: a figure saved past it would be missing there.
     """
     for fmt in formats:
-        fig.savefig(f"{results}/OS-stats/{stem}.{fmt}", dpi=200, format=fmt)
-    REPORT.figure(fig, caption=stem)
+        fig.savefig(f"{results}/{subdir}/{stem}.{fmt}", dpi=200, format=fmt)
+    if report is not None:
+        report.figure(fig, caption=caption or stem)
