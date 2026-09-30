@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 from lifelines import CoxPHFitter, CoxTimeVaryingFitter
 from lifelines.statistics import proportional_hazard_test
-from scipy import stats as scipy_stats
 
 from utils.database.config import ADJUSTMENT_COVARIATES, ADJUSTMENT_ORDER, ALPHA
+from utils.statistics import llr_pvalue
 from utils.survival import daysXmonth, split_at_event_times
 
 
@@ -106,6 +106,47 @@ def build_site_design(data, covariates):
         blocks.append(dict(key=key, label=spec["label"], columns=columns))
 
     return design, blocks, notes
+
+
+def complete_case_frame(data, covariates, duration_col="OS (days)", status_col="status",
+                        site_col=None):
+    """Design of `covariates`, the site column and the survival columns, complete cases only.
+
+    Args:
+        data: Table to read the covariate, site and survival columns from.
+        covariates: Keys of ADJUSTMENT_COVARIATES, built by `build_site_design`.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        site_col: Group indicator placed between the design and the survival
+            columns, or None to leave it out.
+
+    Rows with any missing value, or a duration that is not strictly positive, are
+    dropped: this is the frame a Cox model is fitted on as it stands. The columns
+    come in that order -- design, site, duration, status -- because the fitted
+    model reports its terms in column order.
+    """
+    design, _, _ = build_site_design(data, covariates)
+    site = [data[[site_col]]] if site_col is not None else []
+    frame = pd.concat([design, *site,
+                       pd.to_numeric(data[duration_col], errors="coerce").rename(duration_col),
+                       pd.to_numeric(data[status_col], errors="coerce").rename(status_col)],
+                      axis=1).dropna()
+    return frame[frame[duration_col] > 0]
+
+
+def pair_frame(data, first, second, cohort_col="cohort", pair_col="pair"):
+    """The subjects of two cohorts, with a 0/1 `pair_col` telling them apart.
+
+    Args:
+        data: Pooled table holding `cohort_col`.
+        first: Cohort id coded 0, the reference of the pair.
+        second: Cohort id coded 1, the cohort a pairwise coefficient rescales.
+        cohort_col: Column holding the cohort id.
+        pair_col: Name of the 0/1 indicator column added.
+    """
+    pair = data[data[cohort_col].isin([first, second])].copy()
+    pair[pair_col] = pair[cohort_col].map({first: 0, second: 1})
+    return pair
 
 
 def estimate_site_logHR(data, covariates=(), duration_col="OS (days)",
@@ -462,7 +503,8 @@ def time_varying_terms(frame, terms, duration_col="OS (days)", status_col="statu
             term=term, beta=beta, theta=theta,
             theta_ci_low=float(varying.summary.loc[interaction, "coef lower 95%"]),
             theta_ci_high=float(varying.summary.loc[interaction, "coef upper 95%"]),
-            lr_chi2=float(lr), p=float(scipy_stats.chi2.sf(max(lr, 0.0), 1)),
+            lr_chi2=float(lr),
+            p=float(llr_pvalue(varying.log_likelihood_, constant.log_likelihood_, 1)),
             ref_months=reference / daysXmonth, rows=len(long), reason=""))
         curves[term] = dict(months=grid / daysXmonth, beta_t=beta + theta * u,
                             lower=beta + theta * u - 1.96 * se,

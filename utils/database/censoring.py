@@ -7,7 +7,7 @@ from sksurv.compare import compare_survival
 
 from utils.database.config import (COHORTS, TIPPING_DELTAS, TIPPING_IMPUTATIONS,
                                    FOLLOWUP_HORIZONS_MONTHS, ADJUSTMENT_COVARIATES)
-from utils.database.site_model import build_site_design, fit_cox
+from utils.database.site_model import complete_case_frame, fit_cox
 from utils.survival import (as_structured, breslow_cumulative_hazard, daysXmonth, km_curve,
                             km_median, restricted_mean)
 
@@ -185,12 +185,7 @@ def censoring_hazard_table(data, covariates, site_labels, site_col="site",
     for site in sorted(data[site_col].dropna().unique()):
         label = site_labels.get(site, site)
         block = data[data[site_col] == site]
-        design, _, _ = build_site_design(block, covariates)
-        duration = pd.to_numeric(block[duration_col], errors="coerce")
-        status = pd.to_numeric(block[status_col], errors="coerce")
-        frame = pd.concat([design, duration.rename(duration_col),
-                           status.rename(status_col)], axis=1).dropna()
-        frame = frame[frame[duration_col] > 0]
+        frame = complete_case_frame(block, covariates, duration_col, status_col)
 
         if cohort_col in block.columns:
             parts = []
@@ -279,12 +274,7 @@ def censoring_tipping_point(data, covariates, site_labels, deltas=TIPPING_DELTAS
     log delta), or None when the grid does not bracket it, and
     `attrs["observed"]` the site HR of the unimputed fit.
     """
-    design, _, _ = build_site_design(data, covariates)
-    duration = pd.to_numeric(data[duration_col], errors="coerce")
-    status = pd.to_numeric(data[status_col], errors="coerce")
-    frame = pd.concat([design, data[[site_col]], duration.rename(duration_col),
-                       status.rename(status_col)], axis=1).dropna()
-    frame = frame[frame[duration_col] > 0]
+    frame = complete_case_frame(data, covariates, duration_col, status_col, site_col)
     model, reason = fit_cox(frame, duration_col, status_col)
     if model is None:
         table = pd.DataFrame()

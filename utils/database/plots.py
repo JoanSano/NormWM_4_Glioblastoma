@@ -17,6 +17,7 @@ from utils.database.config import ALPHA, DEFAULT_TIPPING_PLAUSIBLE
 from utils.database.site_model import build_site_design, fit_cox
 from utils.formatting import fmt_p_inline, fmt_p_phrase
 from utils.report import save_figure
+from utils.statistics import to_structured_array
 from utils.survival import as_structured, at_risk_and_censored, daysXmonth, draw_at_risk_table, km_curve
 
 
@@ -253,7 +254,7 @@ def inspect_survival_diffs_in_paired_cohorts(
     )
     model_data = full_data.loc[mask]
     X = model_data[covariate_col].map(map4cox).values.reshape(-1, 1)
-    y = as_structured(model_data[status_col] == 1, model_data[duration_col])
+    y = to_structured_array(model_data, status_col, duration_col)
 
     Cmodel = CoxPHSurvivalAnalysis(n_iter=200)
     Cmodel.fit(X, y)

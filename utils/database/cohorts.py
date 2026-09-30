@@ -393,3 +393,28 @@ LOADERS = {
     "RHUH": load_rhuh,
     "LUMIERE": load_lumiere,
 }
+
+
+def load_cohorts(names, main_dir, site_of, idh, grade, stream_th):
+    """Load and harmonise every selected cohort, tagged with its cohort id and site code.
+
+    Args:
+        names: Cohort names to load, in the order they are pooled.
+        main_dir: Root directory holding one folder per cohort.
+        site_of: {cohort name: 0 or 1}, as `resolve_site_codes` returns.
+        idh: IDH status the per-cohort pipeline was run with.
+        grade: WHO grade the pipeline was run with.
+        stream_th: Minimum streamline density the indices were extracted at.
+
+    Returns one table per cohort, in the order of `names`, each with its
+    censoring already printed.
+    """
+    tables = []
+    for name in names:
+        paths = cohort_paths(main_dir, name, idh, grade, stream_th)
+        data = LOADERS[name](paths)
+        data["cohort"] = COHORTS[name]["id"]
+        data["site"] = site_of[name]  # The 0/1 group the correction acts on
+        report_censoring(name, data)
+        tables.append(data)
+    return tables

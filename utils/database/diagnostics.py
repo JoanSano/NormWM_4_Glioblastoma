@@ -8,7 +8,7 @@ from utils.database.config import (DEFAULT_LADDER, DEFAULT_TIPPING_PLAUSIBLE, TI
                                    TIPPING_IMPUTATIONS)
 from utils.database.plots import (plot_adjustment_ladder, plot_reverse_km, plot_time_varying_terms,
                                   plot_tipping_point)
-from utils.database.site_model import (adjustment_ladder, build_site_design, fit_cox,
+from utils.database.site_model import (adjustment_ladder, complete_case_frame, fit_cox,
                                        proportional_hazards_table, site_balance_table,
                                        time_varying_terms)
 from utils.formatting import fmt_p, fmt_p_phrase, section, subsection
@@ -434,13 +434,7 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
             "not what the table describes.")
 
     subsection("Proportional hazards, every term of the adjusted model")
-    design, _, _ = build_site_design(database, ladder_covariates)
-    ph_frame = pd.concat(
-        [design, database[["site"]],
-         pd.to_numeric(database["OS (days)"], errors="coerce").rename("OS (days)"),
-         pd.to_numeric(database["status"], errors="coerce").rename("status")],
-        axis=1).dropna()
-    ph_frame = ph_frame[ph_frame["OS (days)"] > 0]
+    ph_frame = complete_case_frame(database, ladder_covariates, site_col="site")
     gt, varying = assess_proportional_hazards(
         ph_frame, RESULTS, "Site-diagnostics_non-proportional-terms", formats,
         label="pooled site comparison", show_plot=show_plot)

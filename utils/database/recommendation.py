@@ -7,6 +7,17 @@ from utils.formatting import fmt_p_phrase, section
 from utils.report import REPORT
 
 
+def outcome_column(verdict):
+    """The survival column a verdict sends downstream analyses to, quoted for printing.
+
+    Args:
+        verdict: "raw", "corrected" or "undetermined", as `recommend_outcome_column`
+            returns it.
+    """
+    return {"raw": "'OS (days)'", "corrected": "'OS (days) - corrected'"}.get(
+        verdict, "neither column without further checks")
+
+
 def _final_rung(ladder):
     """The most adjusted rung of the ladder that was actually fitted.
 
@@ -272,8 +283,7 @@ def report_recommendation(provenance, diagnostics, site_labels):
         print("\n  Caveats:")
         for line in caveats:
             print(f"  - {line}")
-    column = {"raw": "'OS (days)'", "corrected": "'OS (days) - corrected'"}.get(
-        verdict, "neither column without further checks")
+    column = outcome_column(verdict)
     print(f"\n  Verdict: {verdict.upper()} -- downstream analyses should read {column}.")
 
     REPORT.heading("Recommendation: raw or corrected survival times?")

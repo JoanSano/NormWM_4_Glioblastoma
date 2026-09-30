@@ -110,8 +110,8 @@ import pandas as pd  # noqa: E402
 
 from utils import runlog  # noqa: E402
 from utils.database.cohorts import (  # noqa: E402
-    LOADERS, build_site_labels, cohort_paths, default_output_stem, is_default_partition,
-    report_censoring, resolve_site_codes,
+    build_site_labels, default_output_stem, is_default_partition, load_cohorts,
+    resolve_site_codes,
 )
 from utils.database.config import (  # noqa: E402
     ADJUSTMENT_COVARIATES, ADJUSTMENT_ORDER, COHORTS, DEFAULT_TIPPING_PLAUSIBLE, KEYS_MAPS,
@@ -124,8 +124,10 @@ from utils.database.method_text import report_method_and_references  # noqa: E40
 from utils.database.plots import (  # noqa: E402
     inspect_survival_diffs_in_paired_cohorts, plot_cohort_survival,
 )
-from utils.database.recommendation import report_recommendation  # noqa: E402
-from utils.database.site_model import build_site_design, estimate_site_logHR  # noqa: E402
+from utils.database.recommendation import outcome_column, report_recommendation  # noqa: E402
+from utils.database.site_model import (  # noqa: E402
+    complete_case_frame, estimate_site_logHR, pair_frame,
+)
 from utils.formatting import subsection  # noqa: E402
 from utils.report import REPORT  # noqa: E402
 from utils.runlog import announce, resolve_log_path, tee_stdout  # noqa: E402
@@ -286,39 +288,15 @@ def main(argv=None):
         assemble_database(args, main_dir, RESULTS, formats)
 
 
-def assemble_database(args, main_dir, RESULTS, formats):
-    """Harmonise the cohorts, correct the site effect and write the pooled table.
+def report_cohorts(names, tables, site_of, site_labels):
+    """Print the site partition and open the report with the table of cohorts.
 
     Args:
-        args: Parsed command line. Read here: `cohorts`, `site_reference`, `idh`,
-            `grade`, `stream_th`, `pairwise`, `adjust_covariates`, `n_perms`,
-            `output_name` and `show`; the flags shaping the diagnostics are read
-            by `report_site_diagnostics`, which now runs on every call.
-        main_dir: Root directory holding the per-cohort folders.
-        RESULTS: Output directory. It and its OS-stats/ already exist by now.
-        formats: Figure formats to write.
-
-    The order is deliberate: the diagnostics are reported before the correction
-    is applied, so the evidence for the coefficient comes before the coefficient.
+        names: Cohort names pooled in this run, in pooling order.
+        tables: One harmonised table per cohort, in the same order.
+        site_of: {cohort name: 0 or 1}, as `resolve_site_codes` returns.
+        site_labels: {code: name} of the site groups.
     """
-    # --- Per-cohort harmonisation ------------------------------------------
-    names = sorted(set(args.cohorts), key=lambda n: COHORTS[n]["id"])
-    site_of = resolve_site_codes(names, args.site_reference)
-    tables = []
-    for name in names:
-        paths = cohort_paths(main_dir, name, args.idh, args.grade, args.stream_th)
-        data = LOADERS[name](paths)
-        data["cohort"] = COHORTS[name]["id"]
-        data["site"] = site_of[name]  # The 0/1 group the correction acts on
-        report_censoring(name, data)
-        tables.append(data)
-
-    database = pd.concat(tables, ignore_index=True)
-    cohort_ids = [COHORTS[n]["id"] for n in names]
-    name_cohort = {COHORTS[n]["id"]: n for n in names}
-    colors = [COHORTS[n]["color"] for n in names]
-    n_cohort = {COHORTS[n]["id"]: len(t) for n, t in zip(names, tables)}
-    site_labels = build_site_labels(names, site_of)
     grouping = "default" if is_default_partition(site_of) else "custom (--site-reference)"
     print("\nSite partition (" + grouping + "): "
           + "; ".join(f"{code} = {label}" for code, label in sorted(site_labels.items())))
@@ -332,100 +310,119 @@ def assemble_database(args, main_dir, RESULTS, formats):
         "is the reference, whose survival times are left untouched; group 1's are "
         "rescaled by the fitted coefficient.")
     REPORT.table(pd.DataFrame([
-        dict(cohort=n, id=COHORTS[n]["id"], n=n_cohort[COHORTS[n]["id"]],
+        dict(cohort=n, id=COHORTS[n]["id"], n=len(tables[k]),
              events=int((tables[k]["status"] == 1).sum()),
              pct_censored=100.0 * (tables[k]["status"] == 0).mean(),
              site=site_of[n], site_group=site_labels[site_of[n]])
         for k, n in enumerate(names)]), float_format=lambda v: f"{v:.1f}")
 
-    # --- Survival before correction ----------------------------------------
-    REPORT.heading("Survival before correction")
-    print("\n" + "=" * 40 + "\nSurvival before correction\n" + "=" * 40)
+
+def report_survival(database, names, RESULTS, formats, show_plot, when, duration_col):
+    """Kaplan-Meier curves of every cohort, as one section of the report.
+
+    Args:
+        database: Pooled table of every selected cohort.
+        names: Cohort names pooled in this run, in pooling order.
+        RESULTS: Results directory; the figure lands in its OS-stats/.
+        formats: Figure formats to write.
+        show_plot: Display the figure as well as writing it.
+        when: "before" or "after" the correction; names the section and the file.
+        duration_col: Survival column to plot, raw or corrected.
+    """
+    title = f"Survival {when} correction"
+    REPORT.heading(title)
+    print("\n" + "=" * 40 + f"\n{title}\n" + "=" * 40)
     plot_cohort_survival(
         full_data=database,
-        cohort_ids=cohort_ids,
-        name_cohort=name_cohort,
-        colors=colors,
+        cohort_ids=[COHORTS[n]["id"] for n in names],
+        name_cohort={COHORTS[n]["id"]: n for n in names},
+        colors=[COHORTS[n]["color"] for n in names],
         RESULTS=RESULTS,
-        stem="OS-cohorts_before-correction",
-        title="Survival before correction",
-        duration_col="OS (days)",
+        stem=f"OS-cohorts_{when}-correction",
+        title=title,
+        duration_col=duration_col,
         formats=formats,
-        show_plot=args.show,
+        show_plot=show_plot,
     )
 
-    # --- Pairwise comparisons ----------------------------------------------
-    if args.pairwise:
-        REPORT.heading("Pairwise cohort comparisons")
-        REPORT.paragraph(
-            "One figure per pair of cohorts. The left panels diagnose the model "
-            "whose coefficient the right panel applies, so an adjusted pair is "
-            "diagnosed adjusted; the cloglog curves and their log-rank stay "
-            "marginal, since a Kaplan-Meier curve has no covariates to hold fixed.")
-        for i, j in itertools.combinations(cohort_ids, 2):
-            # A pairwise difference is worth no more than the site difference is:
-            # two cohorts differ in case-mix as readily as two sites do. When
-            # covariates are being adjusted for at all, each pair gets its own
-            # adjusted coefficient, estimated on that pair alone -- a coefficient
-            # borrowed from the site model would describe a different contrast --
-            # and the diagnostic panel is fitted on that same model.
-            pair_adjusted = None
-            if args.adjust_covariates:
-                pair = database[database["cohort"].isin([i, j])].copy()
-                pair["pair"] = pair["cohort"].map({i: 0, j: 1})
-                pair_adjusted = estimate_site_logHR(pair, args.adjust_covariates,
-                                                    site_col="pair")
-                if pair_adjusted["logHR"] is None:
-                    print(f"WARNING: the adjusted model for {name_cohort[i]} vs "
-                          f"{name_cohort[j]} could not be fit "
-                          f"({pair_adjusted['reason']}); that figure stays crude.")
-                    pair_adjusted = None
-            inspect_survival_diffs_in_paired_cohorts(
-                full_data=database,
-                cohorts=[i, j],
-                RESULTS=RESULTS,
-                name_cohort=name_cohort,
-                colors=[COHORTS[name_cohort[i]]["color"], COHORTS[name_cohort[j]]["color"]],
-                N_cohorts=[n_cohort[i], n_cohort[j]],
-                covariate_col="cohort",
-                n_perms=args.n_perms,
-                formats=formats,
-                show_plot=args.show,
-                logHR_override=(pair_adjusted or {}).get("logHR"),
-                adjust_covariates=(list(args.adjust_covariates) if pair_adjusted else ()),
-            )
-            # The same assessment the pooled comparison gets: the coefficient
-            # drawn on that figure is only as good as the model it came from,
-            # and a pair can fail proportional hazards where the pool does not
-            names_pair = f"{name_cohort[i]} vs {name_cohort[j]}"
-            pair = database[database["cohort"].isin([i, j])].copy()
-            pair["pair"] = pair["cohort"].map({i: 0, j: 1})
-            design, _, _ = build_site_design(pair, args.adjust_covariates)
-            ph_frame = pd.concat(
-                [design, pair[["pair"]],
-                 pd.to_numeric(pair["OS (days)"], errors="coerce").rename("OS (days)"),
-                 pd.to_numeric(pair["status"], errors="coerce").rename("status")],
-                axis=1).dropna()
-            ph_frame = ph_frame[ph_frame["OS (days)"] > 0]
-            subsection(f"Proportional hazards: {names_pair}")
-            assess_proportional_hazards(
-                ph_frame, RESULTS,
-                f"Site-effects_non-proportional-terms_{name_cohort[i]}-{name_cohort[j]}",
-                formats, label=names_pair, show_plot=args.show)
 
-    # --- Diagnostics --------------------------------------------------------
-    # Always, and before the correction is applied, so the evidence for the number
-    # comes before the number itself. They were behind a flag once; a correction
-    # whose justification is optional is a correction nobody checks.
-    diagnostics = report_site_diagnostics(database, args, RESULTS, site_labels,
-                                          formats, show_plot=args.show)
+def run_pairwise(database, names, args, RESULTS, formats):
+    """Compare every pair of cohorts: survival figure plus proportional-hazards check.
 
-    # --- Site correction ----------------------------------------------------
-    # Survival in UCSF-PDGM is recorded differently from the remaining cohorts, so the
-    # difference between the two 'site' groups is estimated and divided out.
-    database, provenance = apply_site_correction(database, args, RESULTS, site_labels, formats)
+    Args:
+        database: Pooled table of every selected cohort, before correction.
+        names: Cohort names pooled in this run, in pooling order.
+        args: Parsed command line. Read here: `adjust_covariates`, `n_perms`, `show`.
+        RESULTS: Results directory; figures land in its OS-stats/.
+        formats: Figure formats to write.
+    """
+    cohort_ids = [COHORTS[n]["id"] for n in names]
+    name_cohort = {COHORTS[n]["id"]: n for n in names}
+    REPORT.heading("Pairwise cohort comparisons")
+    REPORT.paragraph(
+        "One figure per pair of cohorts. The left panels diagnose the model "
+        "whose coefficient the right panel applies, so an adjusted pair is "
+        "diagnosed adjusted; the cloglog curves and their log-rank stay "
+        "marginal, since a Kaplan-Meier curve has no covariates to hold fixed.")
+    for i, j in itertools.combinations(cohort_ids, 2):
+        pair = pair_frame(database, i, j)
+        # A pairwise difference is worth no more than the site difference is:
+        # two cohorts differ in case-mix as readily as two sites do. When
+        # covariates are being adjusted for at all, each pair gets its own
+        # adjusted coefficient, estimated on that pair alone -- a coefficient
+        # borrowed from the site model would describe a different contrast --
+        # and the diagnostic panel is fitted on that same model.
+        pair_adjusted = None
+        if args.adjust_covariates:
+            pair_adjusted = estimate_site_logHR(pair, args.adjust_covariates,
+                                                site_col="pair")
+            if pair_adjusted["logHR"] is None:
+                print(f"WARNING: the adjusted model for {name_cohort[i]} vs "
+                      f"{name_cohort[j]} could not be fit "
+                      f"({pair_adjusted['reason']}); that figure stays crude.")
+                pair_adjusted = None
+        inspect_survival_diffs_in_paired_cohorts(
+            full_data=database,
+            cohorts=[i, j],
+            RESULTS=RESULTS,
+            name_cohort=name_cohort,
+            colors=[COHORTS[name_cohort[i]]["color"], COHORTS[name_cohort[j]]["color"]],
+            N_cohorts=[int((database["cohort"] == i).sum()),
+                       int((database["cohort"] == j).sum())],
+            covariate_col="cohort",
+            n_perms=args.n_perms,
+            formats=formats,
+            show_plot=args.show,
+            logHR_override=(pair_adjusted or {}).get("logHR"),
+            adjust_covariates=(list(args.adjust_covariates) if pair_adjusted else ()),
+        )
+        # The same assessment the pooled comparison gets: the coefficient
+        # drawn on that figure is only as good as the model it came from,
+        # and a pair can fail proportional hazards where the pool does not
+        names_pair = f"{name_cohort[i]} vs {name_cohort[j]}"
+        ph_frame = complete_case_frame(pair, args.adjust_covariates, site_col="pair")
+        subsection(f"Proportional hazards: {names_pair}")
+        assess_proportional_hazards(
+            ph_frame, RESULTS,
+            f"Site-effects_non-proportional-terms_{name_cohort[i]}-{name_cohort[j]}",
+            formats, label=names_pair, show_plot=args.show)
 
-    # --- Save ---------------------------------------------------------------
+
+def save_outputs(database, provenance, args, RESULTS, names, site_of, site_labels):
+    """Write the table as CSV and TSV plus keys-maps.json, and complete the provenance.
+
+    Args:
+        database: Assembled table, correction applied.
+        provenance: The dict `apply_site_correction` built; updated in place with
+            what was run and where the table went.
+        args: Parsed command line. Read here: `output_name`.
+        RESULTS: Directory to write into.
+        names: Cohort names pooled in this run, in pooling order.
+        site_of: {cohort name: 0 or 1}, as `resolve_site_codes` returns.
+        site_labels: {code: name} of the site groups.
+
+    Returns the stem every other output of the run is named after.
+    """
     stem = args.output_name or default_output_stem(names)
     database.to_csv(f"{RESULTS}/{stem}.csv", sep=",", index=False)
     database.to_csv(f"{RESULTS}/{stem}.tsv", sep="\t", index=False)
@@ -445,28 +442,95 @@ def assemble_database(args, main_dir, RESULTS, formats):
         site_partition="default" if is_default_partition(site_of) else "custom",
         output=f"{stem}.csv",
     )
-    # Written once, at the end of the run: the recommendation below is part of it
-    print(f"\nAssembled {len(database)} subjects from {len(cohort_ids)} cohorts --> {RESULTS}/{stem}.csv")
+    # The provenance JSON is written once, at the end of the run: the
+    # recommendation is part of it
+    print(f"\nAssembled {len(database)} subjects from {len(names)} cohorts --> {RESULTS}/{stem}.csv")
     print(f"Applied site log HR {provenance['logHR']} "
           f"({provenance['mode']}"
           + (f", adjusted for {', '.join(provenance['adjusted_for'])}"
              if provenance["adjusted_for"] else "") + ")")
+    return stem
+
+
+def finalise_report(provenance, args, RESULTS, stem, names):
+    """Close the report with the provenance and the log's location, and write it.
+
+    Args:
+        provenance: The complete provenance dict, recommendation included.
+        args: Parsed command line. Read here: `log_path`.
+        RESULTS: Directory to write into.
+        stem: Base name of the assembled table, which the report is named after.
+        names: Cohort names pooled in this run, for the title.
+
+    Returns the path of the report.
+    """
+    REPORT.heading("Provenance")
+    REPORT.paragraph(
+        "How the correction was obtained, as written to "
+        f"{stem}_site-correction.json next to the table.")
+    REPORT.code(json.dumps(provenance, indent=4, default=str))
+    REPORT.heading("Run log")
+    REPORT.paragraph(
+        "Everything this run printed -- sample sizes, censoring, every fit and "
+        "every warning, in the order they happened -- is in the text file below, "
+        "not in this page. It is the same content the sections above are drawn "
+        "from, at the level of detail a log has rather than a report.")
+    REPORT.code(getattr(args, "log_path", "createDatabase_log.txt"),
+                caption="Run log")
+    return REPORT.write(
+        f"{RESULTS}/{stem}_report.html",
+        title=f"{', '.join(names)} -- pooled database and site correction",
+        subtitle=" ".join(sys.argv),
+    )
+
+
+def assemble_database(args, main_dir, RESULTS, formats):
+    """Harmonise the cohorts, correct the site effect and write the pooled table.
+
+    Args:
+        args: Parsed command line. Read here: `cohorts`, `site_reference`, `idh`,
+            `grade`, `stream_th`, `pairwise` and `show`; the steps below read the
+            rest.
+        main_dir: Root directory holding the per-cohort folders.
+        RESULTS: Output directory. It and its OS-stats/ already exist by now.
+        formats: Figure formats to write.
+
+    The order is deliberate: the diagnostics are reported before the correction
+    is applied, so the evidence for the coefficient comes before the coefficient.
+    """
+    # --- Per-cohort harmonisation ------------------------------------------
+    names = sorted(set(args.cohorts), key=lambda n: COHORTS[n]["id"])
+    site_of = resolve_site_codes(names, args.site_reference)
+    tables = load_cohorts(names, main_dir, site_of, args.idh, args.grade, args.stream_th)
+    database = pd.concat(tables, ignore_index=True)
+    site_labels = build_site_labels(names, site_of)
+    report_cohorts(names, tables, site_of, site_labels)
+
+    # --- Survival before correction ----------------------------------------
+    report_survival(database, names, RESULTS, formats, args.show, "before", "OS (days)")
+
+    # --- Pairwise comparisons ----------------------------------------------
+    if args.pairwise:
+        run_pairwise(database, names, args, RESULTS, formats)
+
+    # --- Diagnostics --------------------------------------------------------
+    # Always, and before the correction is applied, so the evidence for the number
+    # comes before the number itself. They were behind a flag once; a correction
+    # whose justification is optional is a correction nobody checks.
+    diagnostics = report_site_diagnostics(database, args, RESULTS, site_labels,
+                                          formats, show_plot=args.show)
+
+    # --- Site correction ----------------------------------------------------
+    # Survival in UCSF-PDGM is recorded differently from the remaining cohorts, so the
+    # difference between the two 'site' groups is estimated and divided out.
+    database, provenance = apply_site_correction(database, args, RESULTS, site_labels, formats)
+
+    # --- Save ---------------------------------------------------------------
+    stem = save_outputs(database, provenance, args, RESULTS, names, site_of, site_labels)
 
     # --- Survival after correction ------------------------------------------
-    REPORT.heading("Survival after correction")
-    print("\n" + "=" * 40 + "\nSurvival after correction\n" + "=" * 40)
-    plot_cohort_survival(
-        full_data=database,
-        cohort_ids=cohort_ids,
-        name_cohort=name_cohort,
-        colors=colors,
-        RESULTS=RESULTS,
-        stem="OS-cohorts_after-correction",
-        title="Survival after correction",
-        duration_col="OS (days) - corrected",
-        formats=formats,
-        show_plot=args.show,
-    )
+    report_survival(database, names, RESULTS, formats, args.show, "after",
+                    "OS (days) - corrected")
 
     # --- Which column to use ------------------------------------------------
     # Last, so it is read against the figures and tables that argue it, and after
@@ -481,34 +545,15 @@ def assemble_database(args, main_dir, RESULTS, formats):
     report_method_and_references()
 
     # --- One report holding all of it ---------------------------------------
-    REPORT.heading("Provenance")
-    REPORT.paragraph(
-        "How the correction was obtained, as written to "
-        f"{stem}_site-correction.json next to the table.")
-    REPORT.code(json.dumps(provenance, indent=4, default=str))
-    REPORT.heading("Run log")
-    REPORT.paragraph(
-        "Everything this run printed -- sample sizes, censoring, every fit and "
-        "every warning, in the order they happened -- is in the text file below, "
-        "not in this page. It is the same content the sections above are drawn "
-        "from, at the level of detail a log has rather than a report.")
-    REPORT.code(getattr(args, "log_path", "createDatabase_log.txt"),
-                caption="Run log")
-    report_path = REPORT.write(
-        f"{RESULTS}/{stem}_report.html",
-        title=f"{', '.join(names)} -- pooled database and site correction",
-        subtitle=" ".join(sys.argv),
-    )
+    report_path = finalise_report(provenance, args, RESULTS, stem, names)
 
-    announce(f"\nAssembled {len(database)} subjects from {len(cohort_ids)} cohorts.")
+    announce(f"\nAssembled {len(database)} subjects from {len(names)} cohorts.")
     for label, path in (("table", f"{RESULTS}/{stem}.csv"),
                         ("report", report_path),
                         ("log", getattr(args, "log_path", "createDatabase_log.txt"))):
         announce(f"  {label:7s} {path}")
     verdict = provenance["recommended_outcome"]
-    column = {"raw": "'OS (days)'", "corrected": "'OS (days) - corrected'"}.get(
-        verdict, "neither column without further checks")
-    announce(f"  {'verdict':7s} {verdict.upper()} -- analyse {column}")
+    announce(f"  {'verdict':7s} {verdict.upper()} -- analyse {outcome_column(verdict)}")
 
 
 if __name__ == "__main__":
