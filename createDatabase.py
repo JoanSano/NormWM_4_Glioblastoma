@@ -27,11 +27,15 @@ The resolved partition is recorded in the provenance JSON, so a table always say
 which grouping produced it.
 
 By default the effect is estimated from the `site` indicator alone and the survival
-times of group 1 are multiplied by exp(log HR). A crude effect mixes two things:
-a difference in how survival was recorded, which should be removed, and a
-difference in which patients each cohort enrolled, which is real prognostic
-information and should be kept. `--adjust-covariates` therefore lets the site
-model condition on any of age, sex, EOR, MGMT and KPS.
+times of group 1 are multiplied by exp(log HR). A crude effect mixes three things:
+a difference in when the survival clock starts (entry point), which should be
+removed; a difference in which patients each cohort enrolled (case-mix), which
+is real prognostic information and should be kept; and a difference in how
+follow-up was lost (censoring), which a constant rescaling can neither remove
+nor model. `--adjust-covariates` lets the site model condition on any of age,
+sex, EOR, MGMT and KPS, which takes out case-mix; the censoring diagnostics say
+how much of what remains censoring could explain, and only the rest is a
+candidate for entry point.
 
 The adjusted coefficient is estimated on the subjects reporting every chosen
 covariate and then applied to every subject, so the assembled table never
@@ -43,8 +47,10 @@ obtained is recorded in `<stem>_site-correction.json` next to the table.
 The evidence behind that choice is reported on every run -- covariate balance and
 missingness between the site groups, a same-sample adjustment ladder,
 proportional-hazards tests for every term of the adjusted model (with the failing
-terms described over follow-up time) and a reverse-Kaplan-Meier follow-up
-comparison. `--ladder-covariates` shapes it.
+terms described over follow-up time), a reverse-Kaplan-Meier follow-up
+comparison, person-time completeness of follow-up, Cox models of what predicts
+censoring, and a tipping-point analysis of how much informative censoring the
+adjusted site effect can absorb. `--ladder-covariates` shapes it.
 
 Every figure and table the run produces, and the recommendation it ends with, are
 collected into a single self-contained `<stem>_report.html` next to the table, with
@@ -317,7 +323,8 @@ class Report:
         """Append a heading.
 
         Args:
-            text: Heading text.
+            text: Heading text, without a number; sections and subsections are
+                numbered when the report is rendered.
             level: HTML heading level, 2 for a section and 3 for a subsection.
         """
         self.blocks.append(("heading", (level, text)))
@@ -405,10 +412,20 @@ class Report:
         parts.append(f"<h1>{html.escape(title)}</h1>")
         if subtitle:
             parts.append(f'<p class="subtitle">{html.escape(subtitle)}</p>')
+        # Numbered here rather than by the callers, so a section that only some
+        # runs produce (--pairwise) renumbers everything after it consistently
+        section = subsection = 0
         for kind, payload in self.blocks:
             if kind == "heading":
                 level, text = payload
-                parts.append(f"<h{level}>{html.escape(text)}</h{level}>")
+                if level == 2:
+                    section, subsection = section + 1, 0
+                    number, anchor = f"{section}.", f"sec-{section}"
+                else:
+                    subsection += 1
+                    number, anchor = f"{section}.{subsection}", f"sec-{section}-{subsection}"
+                parts.append(f'<h{level} id="{anchor}">{number} '
+                             f"{html.escape(text)}</h{level}>")
             elif kind == "paragraph":
                 parts.append(f"<p>{html.escape(payload)}</p>")
             elif kind == "callout":
@@ -543,7 +560,8 @@ def at_risk_and_censored(data, months, duration_col, status_col):
     return at_risk, censored
 
 
-def draw_at_risk_table(ax, months, rows, colors, top=-0.07, step_y=0.06, fontsize=9.5):
+def draw_at_risk_table(ax, months, rows, colors, top=-0.07, step_y=0.06, fontsize=9.5,
+                       header="No. at risk (right-censored)"):
     """Draw the "No. at risk (right-censored)" block under a Kaplan-Meier curve.
 
     Args:
@@ -556,6 +574,8 @@ def draw_at_risk_table(ax, months, rows, colors, top=-0.07, step_y=0.06, fontsiz
         top: y of the first row, in data coordinates.
         step_y: vertical distance between rows, in data coordinates.
         fontsize: point size of the counts.
+        header: Bold line above the counts, saying what the pair means; the
+            reverse Kaplan-Meier prints a different pair under the same layout.
 
     Columns are thinned to whatever fits: "367 (144)" is roughly twice the width
     of the bare count this used to print, and eleven of them do not fit across a
@@ -577,7 +597,7 @@ def draw_at_risk_table(ax, months, rows, colors, top=-0.07, step_y=0.06, fontsiz
             ax.text(months[i], top - step_y * k, row[i], transform=ax.transData,
                     fontsize=fontsize, verticalalignment="top",
                     horizontalalignment="center", color=colors[k])
-    ax.text(ax.get_xlim()[0], -0.01, "No. at risk (right-censored)",
+    ax.text(ax.get_xlim()[0], -0.01, header,
             transform=ax.transData, fontsize=10, verticalalignment="top",
             color="black", fontweight="bold")
     ax.hlines(0, ax.get_xlim()[0], months[-1] + 5, color="black", linewidth=0.5)
@@ -1803,6 +1823,352 @@ def reverse_km_followup(data, site_labels, site_col="site", duration_col="OS (da
     return table
 
 
+# Horizons, in months, at which the completeness of follow-up is measured. GBM
+# median survival is 12-16 months, so these bracket the part of the curve every
+# downstream model leans on.
+FOLLOWUP_HORIZONS_MONTHS = (12, 24)
+
+# Multipliers of the post-censoring hazard the tipping-point analysis walks, and
+# the imputations pooled at each. delta = 1 is independent censoring.
+TIPPING_DELTAS = (0.2, 1 / 3, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 5.0)
+TIPPING_IMPUTATIONS = 20
+
+# Default of --tipping-plausible: the band [1 / b, b] of delta the report treats
+# as a plausible departure from independent censoring -- here, patients lost to
+# follow-up dying at up to twice (or half) the rate of comparable patients who
+# stayed. A convention, not an established threshold, hence a command-line input.
+DEFAULT_TIPPING_PLAUSIBLE = 2.0
+
+
+def restricted_mean(time, survival_prob, horizon):
+    """Area under a Kaplan-Meier step function from 0 to `horizon`.
+
+    Args:
+        time: Times of the curve, ascending and starting at 0 (as `km_curve`
+            returns them).
+        survival_prob: Survival probability from each of those times onwards.
+        horizon: Upper limit of the integral, in the units of `time`.
+    """
+    time, survival_prob = np.asarray(time, float), np.asarray(survival_prob, float)
+    keep = time < horizon
+    edges = np.append(time[keep], horizon)
+    return float(np.sum(survival_prob[keep] * np.diff(edges)))
+
+
+def followup_completeness(data, site_labels, horizons=FOLLOWUP_HORIZONS_MONTHS,
+                          site_col="site", cohort_col="cohort",
+                          duration_col="OS (days)", status_col="status"):
+    """How much of the follow-up each group owed by a horizon was actually observed.
+
+    Args:
+        data: Table holding the site, cohort and survival columns.
+        site_labels: {code: name} used to name the site-group rows.
+        horizons: Horizons, in months, at which completeness is measured.
+        site_col: Column holding the site indicator.
+        cohort_col: Column holding the cohort id; each cohort gets its own rows
+            after the site groups, since one site group can mix a cohort that
+            censors administratively with one that loses patients early. Skipped
+            when absent.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+
+    The reverse Kaplan-Meier answers how LONG a group was watched, not how
+    COMPLETELY: it treats a death as censoring of follow-up, so a group with many
+    early deaths looks poorly followed however diligently it was. With GBM's
+    early mortality that bias is large. The person-time rates of Clark et al.
+    and Xue et al. ask instead what fraction of the person-time owed by the
+    horizon tau was observed, a death counting as complete follow-up:
+
+      percentage  1 - fraction censored before tau (every dropout counted as lost
+                  at time 0 -- the CONSORT convention, a floor)
+      CCI         observed / potential person-time, dropouts owed the full tau
+                  (Clark's completeness index; a lower bound on the true rate)
+      SPT         dropouts credited with their observed time, everyone else with
+                  tau (Xue's simplified person-time; a slight upper bound)
+      FPT         observed person-time / N x restricted mean survival to tau,
+                  i.e. the person-time owed had nobody dropped out, estimated
+                  from the Kaplan-Meier curve (Xue's formal person-time)
+
+    CCI and SPT bracket the true rate; FPT estimates it, under the same
+    independent-censoring assumption every other estimate here makes. (Treating
+    death as a competing risk for loss to follow-up, the other correction of the
+    reverse Kaplan-Meier that Xue et al. suggest, adds nothing here: with loss the
+    only cause of censoring it reduces exactly to the percentage method.)
+    """
+    blocks = [(site_labels.get(s, s), data[data[site_col] == s])
+              for s in sorted(data[site_col].dropna().unique())]
+    if cohort_col in data.columns:
+        cohort_names = {spec["id"]: name for name, spec in COHORTS.items()}
+        # Only inside a site group that pools several cohorts; a group of one
+        # would repeat its own row
+        pooled = data.groupby(site_col)[cohort_col].transform("nunique") > 1
+        blocks += [(f"  {cohort_names.get(c, c)}", data[data[cohort_col] == c])
+                   for c in sorted(data.loc[pooled, cohort_col].dropna().unique())]
+
+    rows = []
+    for label, block in blocks:
+        block = block[block[duration_col].notna() & block[status_col].notna()]
+        time = block[duration_col].to_numpy(float)
+        event = (block[status_col] == 1).to_numpy()
+        n = len(time)
+        if not n:
+            continue
+        km_t, km_s, _ = km_curve(block, duration_col, status_col)
+        flipped = block.assign(**{status_col: 1 - block[status_col]})
+        rkm_t, rkm_s, _ = km_curve(flipped, duration_col, status_col)
+
+        for months in horizons:
+            tau = months * daysXmonth
+            dropout = ~event & (time < tau)
+            observed = np.minimum(time, tau).sum()
+            owed = n * restricted_mean(km_t, km_s, tau)
+
+            rows.append(dict(
+                group=label, horizon_months=months, n=n,
+                lost_before_horizon=int(dropout.sum()),
+                percentage=1.0 - dropout.mean(),
+                reverse_km=float(rkm_s[np.searchsorted(rkm_t, tau, side="right") - 1]),
+                CCI=observed / np.where(dropout, tau, np.minimum(time, tau)).sum(),
+                SPT=np.where(dropout, time, tau).sum() / (n * tau),
+                FPT=observed / owed if owed > 0 else np.nan,
+            ))
+    return pd.DataFrame(rows)
+
+
+def censoring_hazard_table(data, covariates, site_labels, site_col="site",
+                           duration_col="OS (days)", status_col="status",
+                           cohort_col="cohort", min_censored=10):
+    """What predicts being censored, next to what predicts dying, per site group.
+
+    Args:
+        data: Table holding the site, survival and covariate columns.
+        covariates: Keys of ADJUSTMENT_COVARIATES to model both hazards on.
+        site_labels: {code: name} used to name the groups.
+        site_col: Column holding the site indicator.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        cohort_col: Column holding the cohort id, used only to say which cohorts
+            the complete cases of each group come from. Skipped when absent.
+        min_censored: Fewest censorings a group needs before its censoring
+            hazard is modelled at all.
+
+    Two Cox models per group on the same complete-case sample: one with the event
+    indicator flipped, so censoring is the event, and the ordinary one for death.
+    Censoring that depends on the covariates is not a failure of the adjusted
+    site model -- conditional on those covariates it is still independent, so the
+    adjusted hazard ratio stays consistent -- but it does bias every marginal
+    Kaplan-Meier curve, crude or corrected. And when the covariates that predict
+    censoring are the ones that predict death, with the same signs, the patients
+    lost to follow-up are the sicker ones, which is the pattern that makes it
+    plausible that censoring also depends on a prognostic factor nobody recorded.
+
+    Returns one row per group and term, `same_side` saying whether the two
+    hazard ratios fall on the same side of 1; `attrs["global"]` holds, per group,
+    the likelihood-ratio test of the censoring model against the empty one as
+    (chi2, df, p), and `attrs["composition"]`, per group, which cohorts its
+    complete cases come from and which covariate removes the rest.
+    """
+    rows, global_tests, composition = [], {}, {}
+    cohort_names = {spec["id"]: name for name, spec in COHORTS.items()}
+    for site in sorted(data[site_col].dropna().unique()):
+        label = site_labels.get(site, site)
+        block = data[data[site_col] == site]
+        design, _, _ = build_site_design(block, covariates)
+        duration = pd.to_numeric(block[duration_col], errors="coerce")
+        status = pd.to_numeric(block[status_col], errors="coerce")
+        frame = pd.concat([design, duration.rename(duration_col),
+                           status.rename(status_col)], axis=1).dropna()
+        frame = frame[frame[duration_col] > 0]
+
+        if cohort_col in block.columns:
+            parts = []
+            for c in sorted(block[cohort_col].dropna().unique()):
+                members = block[block[cohort_col] == c]
+                kept = int(members.index.isin(frame.index).sum())
+                part = f"{cohort_names.get(c, c)} {kept} of {len(members)}"
+                absent = [ADJUSTMENT_COVARIATES[k]["label"] for k in covariates
+                          if pd.to_numeric(members[ADJUSTMENT_COVARIATES[k]["column"]],
+                                           errors="coerce").isna().all()]
+                if absent:
+                    part += f" ({', '.join(absent)} never recorded)"
+                parts.append(part)
+            composition[label] = "; ".join(parts)
+        # A level the complete cases of this group never show is a column of zeros
+        frame = frame.loc[:, frame.nunique() > 1]
+        censored = int((frame[status_col] == 0).sum())
+
+        base = dict(group=label, n=len(frame), censored=censored)
+        if censored < min_censored:
+            rows.append(dict(base, term="(not modelled)",
+                             reason=f"only {censored} censored among the complete "
+                                    f"cases; at least {min_censored} needed"))
+            continue
+        censoring, reason = fit_cox(frame.assign(**{status_col: 1 - frame[status_col]}),
+                                    duration_col, status_col)
+        death, reason_death = fit_cox(frame, duration_col, status_col)
+        if censoring is None or death is None:
+            rows.append(dict(base, term="(not modelled)", reason=reason or reason_death))
+            continue
+
+        lr = censoring.log_likelihood_ratio_test()
+        global_tests[label] = (float(lr.test_statistic), int(lr.degrees_freedom),
+                               float(lr.p_value))
+        for term in censoring.params_.index:
+            rows.append(dict(
+                base, term=term,
+                HR_censoring=float(censoring.summary.loc[term, "exp(coef)"]),
+                p_censoring=float(censoring.summary.loc[term, "p"]),
+                HR_death=float(death.summary.loc[term, "exp(coef)"]),
+                p_death=float(death.summary.loc[term, "p"]),
+                same_side=("yes" if (censoring.params_[term] > 0)
+                           == (death.params_[term] > 0) else "no"),
+                reason=None,
+            ))
+    table = pd.DataFrame(rows)
+    table.attrs["global"] = global_tests
+    table.attrs["composition"] = composition
+    return table
+
+
+def breslow_cumulative_hazard(time, event, risk, grid):
+    """Breslow's cumulative baseline hazard at each time of `grid`.
+
+    Args:
+        time: Per-subject follow-up time.
+        event: Per-subject 0/1 event indicator.
+        risk: Per-subject exp(linear predictor).
+        grid: Ascending distinct event times to evaluate at.
+    """
+    order = np.argsort(time)
+    time, event, risk = time[order], event[order], risk[order]
+    # Sum of risk over everyone still at risk at t: a reverse cumulative sum,
+    # read at the first subject whose time is >= t
+    at_risk = np.cumsum(risk[::-1])[::-1]
+    first = np.searchsorted(time, grid, side="left")
+    deaths = np.array([np.sum(event[time == t]) for t in grid])
+    return np.cumsum(deaths / at_risk[first])
+
+
+def censoring_tipping_point(data, covariates, site_labels, deltas=TIPPING_DELTAS,
+                            n_imputations=TIPPING_IMPUTATIONS, site_col="site",
+                            duration_col="OS (days)", status_col="status"):
+    """How much informative censoring the adjusted site effect can absorb.
+
+    Args:
+        data: Table holding the site, survival and covariate columns.
+        covariates: Keys of ADJUSTMENT_COVARIATES of the adjusted site model.
+        site_labels: {code: name} used to name the groups.
+        deltas: Multipliers of the post-censoring hazard to walk.
+        n_imputations: Imputed datasets pooled at every delta.
+        site_col: Column holding the 0/1 site indicator.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+
+    Independent censoring cannot be tested, only stressed. Following Jackson et
+    al. (2014), every censored subject of ONE site group is given a death time
+    drawn from the adjusted Cox model itself, conditional on having survived to
+    the censoring time, with the hazard after censoring multiplied by delta:
+
+        H0(T*) = H0(c) + E / (delta * exp(x'beta)),   E ~ Exp(1)
+
+    delta = 1 is independent censoring given the covariates and site; delta > 1
+    says the patients lost to follow-up were dying faster than comparable
+    patients who stayed. Each imputed dataset is refitted with the same model and
+    the site coefficients pooled by Rubin's rules. The coefficients are redrawn
+    from their sampling distribution, and the Breslow baseline recomputed under
+    them, for every imputation, so the pooled interval carries the imputation
+    model's own uncertainty. A draw past the last event time cannot be placed and
+    stays censored there. The shift is applied to each group in turn -- which
+    group lost its patients informatively is exactly what is not known.
+
+    Returns one row per shifted group and delta; `attrs["null_delta"]` holds, per
+    group, the delta at which the pooled site log HR crosses 0 (interpolated on
+    log delta), or None when the grid does not bracket it, and
+    `attrs["observed"]` the site HR of the unimputed fit.
+    """
+    design, _, _ = build_site_design(data, covariates)
+    duration = pd.to_numeric(data[duration_col], errors="coerce")
+    status = pd.to_numeric(data[status_col], errors="coerce")
+    frame = pd.concat([design, data[[site_col]], duration.rename(duration_col),
+                       status.rename(status_col)], axis=1).dropna()
+    frame = frame[frame[duration_col] > 0]
+    model, reason = fit_cox(frame, duration_col, status_col)
+    if model is None:
+        table = pd.DataFrame()
+        table.attrs.update(null_delta={}, observed=None, reason=reason)
+        return table
+
+    terms = list(model.params_.index)
+    beta, cov = model.params_.to_numpy(), model.variance_matrix_.to_numpy()
+    X = frame[terms].to_numpy(float)
+    time = frame[duration_col].to_numpy(float)
+    event = frame[status_col].to_numpy(int)
+    grid = np.unique(time[event == 1])
+
+    rows, null_delta = [], {}
+    for shifted in sorted(frame[site_col].unique()):
+        label = site_labels.get(shifted, shifted)
+        # Censored before the last event time: anyone later has nothing to impute
+        targets = np.flatnonzero((frame[site_col].to_numpy() == shifted)
+                                 & (event == 0) & (time < grid[-1]))
+        curve = []
+        for delta in deltas:
+            estimates, variances = [], []
+            for _ in range(n_imputations):
+                b = np.random.multivariate_normal(beta, cov)
+                risk = np.exp(X @ b)
+                H0 = breslow_cumulative_hazard(time, event, risk, grid)
+                # H0 at each target's censoring time: the last step at or before it
+                at_c = np.searchsorted(grid, time[targets], side="right") - 1
+                start = np.where(at_c >= 0, H0[np.maximum(at_c, 0)], 0.0)
+                draw = start + np.random.standard_exponential(len(targets)) / (
+                    delta * risk[targets])
+                step = np.searchsorted(H0, draw, side="left")
+                placed = step < len(grid)
+
+                imputed = frame.copy()
+                rows_placed = imputed.index[targets[placed]]
+                imputed.loc[rows_placed, duration_col] = grid[step[placed]]
+                imputed.loc[rows_placed, status_col] = 1
+                imputed.loc[imputed.index[targets[~placed]], duration_col] = grid[-1]
+
+                fitted, _ = fit_cox(imputed, duration_col, status_col)
+                if fitted is None:
+                    continue
+                estimates.append(float(fitted.params_[site_col]))
+                variances.append(float(fitted.standard_errors_[site_col]) ** 2)
+
+            m = len(estimates)
+            if m < 2:
+                continue
+            pooled = float(np.mean(estimates))
+            total = np.mean(variances) + (1 + 1 / m) * np.var(estimates, ddof=1)
+            se = float(np.sqrt(total))
+            p = float(2 * scipy_stats.norm.sf(abs(pooled / se)))
+            curve.append((delta, pooled))
+            rows.append(dict(
+                censored_group=label, delta=delta, imputed=len(targets),
+                imputations=m, logHR=pooled, HR=np.exp(pooled),
+                HR_ci_low=np.exp(pooled - 1.96 * se),
+                HR_ci_high=np.exp(pooled + 1.96 * se), p=p,
+            ))
+
+        null_delta[label] = None
+        for (d0, b0), (d1, b1) in zip(curve, curve[1:]):
+            if b0 == 0.0:
+                null_delta[label] = d0
+                break
+            if b0 * b1 < 0:
+                w = b0 / (b0 - b1)
+                null_delta[label] = float(np.exp(np.log(d0) + w * (np.log(d1) - np.log(d0))))
+                break
+
+    table = pd.DataFrame(rows)
+    table.attrs.update(null_delta=null_delta,
+                       observed=float(np.exp(model.params_[site_col])), reason=None)
+    return table
+
+
 def split_at_event_times(frame, duration_col, status_col, columns, max_cuts=1000):
     """Re-express one row per subject as one row per risk set the subject is in.
 
@@ -1896,55 +2262,6 @@ def proportional_hazards_table(model, frame, transform="rank"):
         bonferroni=float(rows["p_bonferroni"].min()) if len(rows) else np.nan,
     )
     return rows
-
-
-def split_at_event_times(frame, duration_col, status_col, columns, max_cuts=1000):
-    """Re-express one row per subject as one row per risk set the subject is in.
-
-    Args:
-        frame: Subjects, one row each, already complete-case and with positive
-            durations.
-        duration_col: Column holding the follow-up time, in days.
-        status_col: Column holding the 0/1 event indicator.
-        columns: Baseline covariate columns to carry onto every interval.
-        max_cuts: Ceiling on the number of split points. Below it the split is at
-            every distinct event time, which is exact; above it the cuts are taken
-            at quantiles of the event times, which keeps a very large pool
-            tractable at the cost of shrinking the interaction slightly toward
-            zero, because a covariate held constant across a wide interval lags
-            the time it is meant to track.
-
-    Returns a (start, stop] table with `id`, the status carried only on each
-    subject's final interval, and `columns` repeated down the intervals.
-
-    Splitting at the event times is what makes a time-varying coefficient
-    identifiable: every member of a risk set then shares the same interval
-    boundary, so the time covariate takes one value across that comparison rather
-    than a different value for the subject who happens to fail.
-    """
-    cuts = np.unique(pd.to_numeric(frame.loc[frame[status_col] == 1, duration_col]))
-    if len(cuts) > max_cuts:
-        cuts = np.unique(np.quantile(cuts, np.linspace(0, 1, max_cuts)))
-    duration = frame[duration_col].values
-    status = frame[status_col].values
-
-    starts, stops, events, owner = [], [], [], []
-    for i, end in enumerate(duration):
-        edges = cuts[cuts < end]
-        lower = np.concatenate(([0.0], edges))
-        upper = np.concatenate((edges, [end]))
-        flags = np.zeros(len(upper))
-        flags[-1] = status[i]
-        starts.append(lower), stops.append(upper)
-        events.append(flags), owner.append(np.full(len(upper), i))
-
-    owner = np.concatenate(owner)
-    out = pd.DataFrame({"id": owner, "start": np.concatenate(starts),
-                        "stop": np.concatenate(stops),
-                        status_col: np.concatenate(events)})
-    for column in columns:
-        out[column] = frame[column].values[owner]
-    return out
 
 
 def time_varying_terms(frame, terms, duration_col="OS (days)", status_col="status",
@@ -2197,8 +2514,139 @@ def plot_adjustment_ladder(ladder, RESULTS, stem, formats, show_plot=True,
     plt.show() if show_plot else plt.close(fig)
 
 
+def plot_reverse_km(data, site_labels, RESULTS, stem, formats, show_plot=True,
+                    site_col="site", duration_col="OS (days)", status_col="status",
+                    colors=("tab:green", "salmon"),
+                    title="Follow-up by site group (reverse Kaplan-Meier)"):
+    """Reverse Kaplan-Meier curves, one per site group, with the log-rank test.
+
+    Args:
+        data: Table holding the site and survival columns.
+        site_labels: {code: name} used in the legend.
+        RESULTS: Results directory; the figure lands in its OS-stats/.
+        stem: File name of the figure, without extension.
+        formats: Figure formats to write.
+        show_plot: Display the figure as well as writing it.
+        site_col: Column holding the site indicator.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        colors: One colour per site group, the same as the site-effect figure.
+        title: Figure title.
+
+    The curve is the probability of still being under follow-up: it drops at a
+    censoring and a death leaves it untouched. Where it crosses 0.5 is the median
+    potential follow-up of the table above; a group that censors almost nobody
+    stays near 1 however many of its patients die.
+
+    The rows beneath are cumulative counts before each month: patients
+    right-censored, which are the steps of the curve, and in brackets the deaths,
+    which leave it without being losses -- the reverse of the at-risk table under
+    an ordinary survival curve.
+    """
+    months = list(range(0, 121, 10))
+    sites = sorted(data[site_col].dropna().unique())
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    counts = []
+    for i, site in enumerate(sites):
+        block = data[(data[site_col] == site) & data[duration_col].notna()
+                     & data[status_col].notna()]
+        before = [block[duration_col] < m * daysXmonth for m in months]
+        counts.append(([int((b & (block[status_col] == 0)).sum()) for b in before],
+                       [int((b & (block[status_col] == 1)).sum()) for b in before]))
+        flipped = block.assign(**{status_col: 1 - block[status_col]})
+        time, prob, conf_int = km_curve(flipped, duration_col, status_col)
+        color = colors[i % len(colors)]
+        ax.step(time / daysXmonth, prob, where="post", color=color, linewidth=2,
+                label=f"{site_labels.get(site, site)} (n={len(block)}, "
+                      f"{int((block[status_col] == 0).sum())} censored)")
+        ax.fill_between(time / daysXmonth, conf_int[0], conf_int[1], alpha=0.10,
+                        step="post", color=color)
+    ax.axhline(0.5, color="black", linewidth=0.8, linestyle="--")
+
+    table = reverse_km_followup(data, site_labels, site_col, duration_col, status_col)
+    if "censoring_logrank" in table.attrs:
+        chi2, p_val = table.attrs["censoring_logrank"]
+        ax.text(0.97, 0.97, r"$\chi^2 =$" + f"{chi2:.4f},\n{fmt_p_phrase(p_val)}",
+                transform=ax.transAxes, fontsize=10, ha="right", va="top",
+                bbox=dict(boxstyle="round", alpha=0.1),
+                color="red" if p_val <= ALPHA else "black")
+    # Room below 0 for the table, as under the survival curves
+    ax.set_ylim([-(0.085 + 0.06 * len(sites)), 1.05])
+    # A cohort with administrative censoring runs out to many years; past ten
+    # the curves say nothing the table does not
+    ax.set_xlim([-5, 125])
+    ax.set_xticks(months)
+    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+    ax.spines["left"].set_bounds(0, 1)
+    ax.spines["bottom"].set_bounds(0, months[-1])
+    ax.set_xlabel("Months", fontsize=11)
+    ax.set_ylabel("Probability of still being under follow-up", fontsize=11)
+    ax.legend(loc="center right", fontsize=9, frameon=False)
+    ax.spines[["top", "right"]].set_visible(False)
+    draw_at_risk_table(ax, months, counts, [colors[i % len(colors)] for i in range(len(sites))],
+                       header="No. right-censored (deaths)")
+    fig.suptitle(title, fontweight="bold")
+    fig.tight_layout()
+    save_figure(fig, RESULTS, stem, formats)
+    plt.show() if show_plot else plt.close(fig)
+
+
+def plot_tipping_point(tipping, RESULTS, stem, formats, show_plot=True,
+                       plausible=DEFAULT_TIPPING_PLAUSIBLE,
+                       colors=("tab:green", "salmon"),
+                       title="How much informative censoring the site effect absorbs"):
+    """Pooled site HR against delta, one line per group whose censoring is shifted.
+
+    Args:
+        tipping: Table from `censoring_tipping_point`.
+        RESULTS: Results directory; the figure lands in its OS-stats/.
+        stem: File name of the figure, without extension.
+        formats: Figure formats to write.
+        show_plot: Display the figure as well as writing it.
+        plausible: Upper edge b of the shaded band [1 / b, b] (--tipping-plausible).
+        colors: One colour per site group, the same as the site-effect figure.
+        title: Figure title.
+
+    The shaded band is the range of delta the reader has declared plausible; the
+    dotted line is the site HR with no imputation at all.
+    """
+    if tipping.empty:
+        return
+    fig, ax = plt.subplots(1, 1, figsize=(7, 5.5))
+    ax.axvspan(1 / plausible, plausible, color="gray", alpha=0.12,
+               label=f"plausible delta, {1 / plausible:.2g}-{plausible:g} "
+                     f"(--tipping-plausible)")
+    for i, (group, rows) in enumerate(tipping.groupby("censored_group", sort=False)):
+        color = colors[i % len(colors)]
+        ax.plot(rows["delta"], rows["HR"], marker="o", color=color, linewidth=2,
+                label=f"censored patients of {group} shifted "
+                      f"({int(rows['imputed'].iloc[0])} imputed)")
+        ax.fill_between(rows["delta"], rows["HR_ci_low"], rows["HR_ci_high"],
+                        color=color, alpha=0.15)
+    ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--")
+    ax.axhline(tipping.attrs["observed"], color="black", linewidth=0.8, linestyle=":",
+               label=f"observed site HR ({tipping.attrs['observed']:.3f})")
+    ax.axvline(1.0, color="black", linewidth=0.5)
+    ax.set_xscale("log")
+    deltas = sorted(tipping["delta"].unique())
+    ax.set_xticks(deltas)
+    ax.set_xticklabels([f"{d:.3g}" for d in deltas], fontsize=8.5)
+    ax.minorticks_off()
+    ax.set_xlabel("delta: hazard of the censored patients after censoring, "
+                  "relative to comparable patients", fontsize=10)
+    ax.set_ylabel("Adjusted site HR (95% CI)", fontsize=11)
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=1, fontsize=8.5, frameon=False)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(title, fontweight="bold")
+    # Room underneath for the legend, which would otherwise sit on the band
+    fig.tight_layout(rect=(0, 0.22, 1, 1))
+    save_figure(fig, RESULTS, stem, formats)
+    plt.show() if show_plot else plt.close(fig)
+
+
 def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_plot=True):
-    """Everything a reader needs to judge whether 'site' is really case-mix.
+    """Everything a reader needs to judge whether 'site' is case-mix, entry point or censoring.
 
     Args:
         database: Assembled table, before the correction is applied.
@@ -2213,19 +2661,42 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
 
     Writes as CSVs under OS-stats/, and into the report, the balance and
     missingness table between the two site groups, the same-sample adjustment
-    ladder and the reverse-Kaplan-Meier follow-up comparison, plus the figure of
-    the site effect against follow-up time. These are supplement tables rather
+    ladder, the reverse-Kaplan-Meier follow-up comparison, the person-time
+    completeness of follow-up, the censoring-hazard models and the
+    informative-censoring tipping point, plus the figure of the site effect
+    against follow-up time. These are supplement tables rather
     than lines in a log, so they are saved as well as reported.
     """
     ladder_covariates = args.ladder_covariates or list(args.adjust_covariates) or DEFAULT_LADDER
     out = {}
 
-    section("SITE DIAGNOSTICS: is the survival difference case-mix or entry point?")
-    REPORT.heading("Site diagnostics: case-mix or entry point?")
+    section("SITE DIAGNOSTICS: is the survival difference case-mix, entry point or censoring?")
+    REPORT.heading("Site diagnostics: case-mix, entry point or censoring?")
     REPORT.paragraph(
-        "Whether the survival difference between the site groups is a difference "
-        "in who the patients are rather than in where they entered. Covariates "
-        f"walked: {', '.join(ladder_covariates)}. Site groups: "
+        "A survival difference between the site groups can come from three "
+        "places. Case-mix: the groups enrolled different patients (older, fewer "
+        "resections, less methylated MGMT). Entry point: the survival clock starts "
+        "at a different event in one group, e.g. at the preoperative MRI in one and "
+        "at diagnosis in another. Censoring: one group lost more of its patients "
+        "to follow-up, and the patients it lost were not like those it kept. The "
+        "three are not exclusive, and they call for different responses: "
+        "case-mix is real and must be kept, entry point is an artefact the "
+        "corrected column is meant to remove, and censoring is an artefact that "
+        "no rescaling removes.")
+    REPORT.paragraph(
+        "The sections below take them in turn. Balance and the adjustment ladder "
+        "(the first two) measure case-mix: what is left of the site effect once "
+        "the covariates are held fixed. The four follow-up and censoring sections "
+        "ask whether censoring could produce that remainder. Entry point has no "
+        "direct measurement in these tables -- nothing records when each cohort "
+        "started its clock -- so it can only be a candidate for what is left once "
+        "the other two are accounted for, alongside case-mix nobody recorded, "
+        "differences in treatment after the clock starts, and chance. Both entry point and censoring tend to concentrate the "
+        "difference in the first months, which the proportional-hazards section "
+        "would show as a site effect that drifts over follow-up; they cannot be "
+        "separated from each other with these data.")
+    REPORT.paragraph(
+        f"Covariates walked: {', '.join(ladder_covariates)}. Site groups: "
         + "; ".join(f"{k} = {v}" for k, v in site_labels.items()) + ".")
     print(f"Covariates walked: {', '.join(ladder_covariates)}")
     print(f"Site groups: " + "; ".join(f"{k} = {v}" for k, v in site_labels.items()))
@@ -2287,10 +2758,218 @@ def report_site_diagnostics(database, args, RESULTS, site_labels, formats, show_
     print(followup.to_string(index=False, float_format=lambda v: f"{v:.1f}"))
     if "censoring_logrank" in followup.attrs:
         chi2, p_val = followup.attrs["censoring_logrank"]
-        print(f"\nLog-rank on the censoring distribution: chi2 = {chi2:.4f}, "
-              f"{fmt_p_phrase(p_val)}")
+        line = (f"Log-rank test on the censoring distributions: chi2 = {chi2:.4f}, "
+                f"{fmt_p_phrase(p_val)}.")
+        print("\n" + line)
         print("A difference here is a difference in how long the groups were watched,")
         print("not in how long they survived.")
+        REPORT.paragraph(line)
+    plot_reverse_km(database, site_labels, RESULTS, "Site-diagnostics_reverse-KM",
+                    formats, show_plot=show_plot)
+
+    subsection("Completeness of follow-up (person-time)")
+    completeness = followup_completeness(database, site_labels)
+    out["followup-completeness"] = completeness
+    REPORT.heading("Completeness of follow-up", level=3)
+    REPORT.paragraph(
+        "The median follow-up above says how LONG each group was watched. This "
+        "table says how COMPLETELY: of the follow-up each group owed up to a "
+        "horizon (12 and 24 months), how much was actually observed. A patient "
+        "who dies before the horizon has been followed completely -- their outcome "
+        "is known -- so only patients censored before the horizon count as "
+        "incomplete. Every column runs from 0 to 1, 1 meaning nobody was lost. "
+        "Indented rows are the cohorts inside a site group that pools several.")
+    for name, meaning in [
+        ("lost_before_horizon",
+         "patients censored before the horizon, i.e. lost to follow-up."),
+        ("percentage",
+         "the fraction of patients not lost. It treats a patient lost at month 11 "
+         "as if lost at month 0, so it is the harshest reading."),
+        ("reverse_km",
+         "the reverse Kaplan-Meier curve of the figure above, read at the "
+         "horizon. It counts every death as a loss of follow-up too, so a group "
+         "with many early deaths looks poorly followed; shown for comparison only."),
+        ("CCI",
+         "Clark's completeness index [12]: observed follow-up time divided by the "
+         "time that would have been observed had nobody been lost, assuming each "
+         "lost patient would have lived to the horizon. That assumption owes them "
+         "too much time, so CCI is a lower bound."),
+        ("SPT",
+         "Xue's simplified person-time rate [11]: lost patients credited with the "
+         "time they were actually seen, every other patient with the whole "
+         "horizon. It credits deaths with time they did not live, so it is a "
+         "slight upper bound."),
+        ("FPT",
+         "Xue's formal person-time rate [11]: observed follow-up time divided by "
+         "the time owed had nobody been lost, with the time owed estimated from "
+         "the group's own survival curve. The best single estimate; it lies "
+         "between CCI and SPT."),
+    ]:
+        REPORT.paragraph(f"{name}: {meaning}")
+    completeness_formats = dict(n=lambda v: f"{int(v):d}",
+                                horizon_months=lambda v: f"{int(v):d}",
+                                lost_before_horizon=lambda v: f"{int(v):d}")
+    REPORT.table(completeness, float_format=lambda v: f"{v:.3f}",
+                 formatters=completeness_formats)
+    print(completeness.to_string(index=False, float_format=lambda v: f"{v:.3f}",
+                                 formatters=completeness_formats))
+    REPORT.paragraph(
+        "What to look at: FPT, and the gap in it between the site groups. Groups "
+        "with similar FPT lost similar shares of their follow-up, and censoring "
+        "is unlikely to separate them. A group whose FPT is well below the other's "
+        "(say 0.80 against 0.97) lost follow-up that the other did not, and its "
+        "survival curve rests on the assumption that the patients it lost were "
+        "no sicker than those it kept -- which the next section tests. The "
+        "percentage and reverse_km columns will look worse than FPT; that is how "
+        "they are built, not a second problem.")
+
+    subsection("What predicts censoring? (Cox on the censoring hazard)")
+    censoring = censoring_hazard_table(database, ladder_covariates, site_labels)
+    out["censoring-hazard"] = censoring
+    REPORT.heading("What predicts censoring?", level=3)
+    REPORT.paragraph(
+        "Were the patients lost to follow-up different from those who stayed? "
+        "Within each site group, two Cox models on the same patients and "
+        "covariates: one where the 'event' is being censored (HR_censoring), and "
+        "the ordinary one where the event is death (HR_death).")
+    REPORT.paragraph(
+        "Reading a row: a hazard ratio above 1 means the covariate makes that "
+        "outcome come sooner, below 1 later. same_side = yes when both hazard "
+        "ratios are above 1 or both below 1: the patients the covariate makes "
+        "more likely to be lost are then also the ones it makes more likely to "
+        "die. An HR_censoring of 1.03 per year of age next to an HR_death of 1.04 "
+        "means older patients both drop out sooner and die sooner. When the "
+        "covariates that predict censoring all do this, the patients lost to "
+        "follow-up were, on average, the sicker ones.")
+    censoring_formats = dict(p_censoring=lambda v: fmt_p(v, 4), p_death=lambda v: fmt_p(v, 4),
+                             n=lambda v: f"{int(v):d}", censored=lambda v: f"{int(v):d}")
+    REPORT.table(censoring, float_format=lambda v: f"{v:.4f}", formatters=censoring_formats)
+    print(censoring.to_string(index=False, float_format=lambda v: f"{v:.4f}",
+                              formatters=censoring_formats))
+    for label, (chi2, df, p_val) in censoring.attrs["global"].items():
+        line = (f"{label}: do the covariates predict censoring at all? Likelihood "
+                f"ratio test against a model without them, chi2 = {chi2:.4f} on "
+                f"{df} df, {fmt_p_phrase(p_val)}.")
+        print(line)
+        REPORT.paragraph(line)
+    skipped = censoring[censoring["term"] == "(not modelled)"]
+    for row in skipped.itertuples():
+        line = (f"{row.group} is not modelled: {row.reason}. The model needs every "
+                f"covariate, so only complete cases enter it, and in this group "
+                f"they are {censoring.attrs['composition'].get(row.group, 'n/a')}.")
+        print(line)
+        REPORT.paragraph(line)
+    REPORT.paragraph(
+        "Why it matters. The adjusted site model conditions on these same "
+        "covariates, so censoring that runs through them does not bias the "
+        "adjusted site hazard ratio. It does bias every Kaplan-Meier curve, crude "
+        "or corrected, since a curve conditions on nothing. And a group that loses "
+        "its sicker patients on the recorded covariates may also be losing them on "
+        "an unrecorded one, such as performance status, which no adjustment can "
+        "reach; the next section asks how much that could matter.")
+    # to_csv drops attrs, so the global tests travel as a table of their own
+    out["censoring-hazard-global"] = pd.DataFrame(
+        [dict(group=k, chi2=v[0], df=v[1], p=v[2])
+         for k, v in censoring.attrs["global"].items()])
+
+    subsection("Tipping point: informative censoring of one site group")
+    plausible = getattr(args, "tipping_plausible", DEFAULT_TIPPING_PLAUSIBLE)
+    # The band's own edges are always tested, so a band wider than the default
+    # grid is never judged from a line that stops short of it
+    deltas = sorted(set(TIPPING_DELTAS) | {plausible, 1.0 / plausible})
+    tipping = censoring_tipping_point(database, ladder_covariates, site_labels,
+                                      deltas=deltas)
+    tipping.attrs["plausible"] = plausible
+    out["censoring-tipping-point"] = tipping
+    REPORT.heading("Tipping point for informative censoring", level=3)
+    if tipping.empty:
+        print(f"Not computed: {tipping.attrs['reason']}")
+        REPORT.paragraph(f"Not computed: {tipping.attrs['reason']}")
+    else:
+        REPORT.paragraph(
+            "The question. A censored patient's death was never observed. Every "
+            "estimate above assumes that, after being censored, they went on to "
+            "die at the same rate as comparable patients who stayed in follow-up "
+            "-- same covariates, same site. That is 'independent censoring', and "
+            "the data cannot confirm it, because what happened after censoring is "
+            "exactly what is missing. What can be done is to ask: if the censored "
+            "patients had in fact died faster (or slower) than that, how much "
+            "would the adjusted site effect change?")
+        REPORT.paragraph(
+            "How it is done [13]. delta is how much faster than a comparable "
+            "patient who stayed. delta = 1 is the independent-censoring "
+            "assumption itself; delta = 2 says they died at twice the rate; "
+            "delta = 0.5 at half. For one value of delta: (1) every censored "
+            "patient of one site group is given a plausible death time, drawn "
+            "from the adjusted Cox model with their own covariates and site, "
+            "later than the day they were censored, and with the hazard after "
+            "censoring multiplied by delta; (2) with those deaths now in the data, "
+            "the adjusted site model is fitted again; (3) steps 1-2 are repeated "
+            f"{TIPPING_IMPUTATIONS} times, since the death times are drawn at "
+            "random, and the site hazard ratios are combined by Rubin's rules [14], "
+            "whose interval includes the spread between the repetitions. This is "
+            "done for each value of delta, and separately for the censored "
+            "patients of each site group, since which group lost its patients "
+            "informatively is not known.")
+        tipping_formats = dict(p=lambda v: fmt_p(v, 4), imputed=lambda v: f"{int(v):d}",
+                               imputations=lambda v: f"{int(v):d}",
+                               delta=lambda v: f"{v:.2f}")
+        REPORT.table(tipping, float_format=lambda v: f"{v:.4f}", formatters=tipping_formats)
+        print(tipping.to_string(index=False, float_format=lambda v: f"{v:.4f}",
+                                formatters=tipping_formats))
+        plot_tipping_point(tipping, RESULTS, "Site-diagnostics_censoring-tipping-point",
+                           formats, show_plot=show_plot, plausible=plausible)
+        REPORT.paragraph(
+            f"How to read it. Each row is one delta for one group: 'imputed' is "
+            f"how many censored patients received a death time, and HR is the "
+            f"adjusted site hazard ratio after they did. At delta = 1 the HR "
+            f"should be close to the one actually estimated "
+            f"({tipping.attrs['observed']:.4f}, dotted line in the figure). The "
+            f"number to look for is the delta at which the HR reaches 1 (dashed "
+            f"line): how different the lost patients would have to be for the "
+            f"whole site effect to be a product of censoring. The shaded band, "
+            f"delta between {1 / plausible:.2g} and {plausible:g}, is the range "
+            f"this run was told to treat as plausible (--tipping-plausible, a "
+            f"judgement rather than an established threshold). If the HR reaches 1 "
+            f"inside the band, lost patients need only have died up to "
+            f"{plausible:g} times as fast as comparable patients who stayed for "
+            f"censoring to account for the whole site effect, so the site effect "
+            f"cannot be told apart from informative censoring. If it reaches 1 "
+            f"only outside the band, or not at all, censoring would have to be "
+            f"implausibly informative to explain it. A group with few censored "
+            f"patients barely moves the HR whatever delta is, because there is "
+            f"little to impute.")
+        for label, delta in tipping.attrs["null_delta"].items():
+            if delta is None:
+                line = (f"Censored patients of {label}: the site HR does not reach 1 "
+                        f"anywhere in delta = {min(deltas):.2g}-{max(deltas):g}, the "
+                        f"whole range tested.")
+            else:
+                inside = 1 / plausible <= delta <= plausible
+                line = (f"Censored patients of {label}: the site HR reaches 1 at "
+                        f"delta = {delta:.2f}, "
+                        + (f"inside the band. If they died about {delta:.1f} times "
+                           f"as fast as comparable patients who stayed, there "
+                           f"would be no site effect at all."
+                           if inside else "outside the band."))
+            print(line)
+            REPORT.paragraph(line)
+        REPORT.paragraph(
+            "What this can and cannot conclude. Inside the band, censoring is a "
+            "sufficient explanation, so the site effect cannot be attributed to "
+            "entry point. Outside the band, censoring is an unlikely sole "
+            "explanation, but that does not make the remainder entry point: it "
+            "rules out one source, not all others. The remainder could equally be "
+            "case-mix nobody recorded (KPS is missing for all of UCSF), a genuine "
+            "difference in treatment or care after the clock starts, or chance. "
+            "And the analysis only has something to explain when the adjusted site "
+            "effect is itself distinguishable from zero; when its confidence "
+            "interval already covers HR = 1, the question is how easily censoring "
+            "could have produced or hidden an effect, not where an established one "
+            "came from. Finally, delta shifts every censored patient of a group "
+            "equally. Censoring that is informative for some of them and not for "
+            "others, as when some leave for hospice and others simply move, is "
+            "not what the table describes.")
 
     subsection("Proportional hazards, every term of the adjusted model")
     design, _, _ = build_site_design(database, ladder_covariates)
@@ -2334,6 +3013,85 @@ def _final_rung(ladder):
         return None
     fitted = ladder[ladder["logHR"].notna() & ladder["model"].str.startswith("+")]
     return None if fitted.empty else fitted.iloc[-1]
+
+
+def censoring_caveats(diagnostics):
+    """The recommendation's sentences about censoring, from this run's diagnostics.
+
+    Args:
+        diagnostics: The tables `report_site_diagnostics` returned.
+
+    Returns a list of strings, empty when the censoring diagnostics raised nothing.
+    """
+    caveats = []
+
+    completeness = diagnostics.get("followup-completeness")
+    if completeness is not None and not completeness.empty:
+        last = completeness[(completeness["horizon_months"] == completeness["horizon_months"].max())
+                            & ~completeness["group"].str.startswith(" ")]
+        if len(last) >= 2 and last["FPT"].max() - last["FPT"].min() > 0.05:
+            worst = last.loc[last["FPT"].idxmin()]
+            best = last.loc[last["FPT"].idxmax()]
+            caveats.append(
+                f"By {int(worst['horizon_months'])} months {worst['group']} observed "
+                f"{100 * worst['FPT']:.1f}% of the person-time it owed and "
+                f"{best['group']} {100 * best['FPT']:.1f}% (formal person-time "
+                f"rate): the loss to follow-up is concentrated in one group.")
+
+    censoring = diagnostics.get("censoring-hazard")
+    if censoring is not None and "global" in censoring.attrs:
+        for group, (_, _, p_val) in censoring.attrs["global"].items():
+            if p_val >= ALPHA:
+                continue
+            terms = censoring[(censoring["group"] == group) & (censoring["p_censoring"] < ALPHA)]
+            same = terms[terms["same_side"] == "yes"]
+            described = ", ".join(
+                f"{t} (censoring HR {h_c:.3f}, death HR {h_d:.3f})"
+                for t, h_c, h_d in zip(terms["term"], terms["HR_censoring"], terms["HR_death"]))
+            sentence = (f"Censoring in {group} depends on the covariates "
+                        f"({fmt_p_phrase(p_val)}): {described}.")
+            if len(same) and len(same) == len(terms):
+                sentence += (
+                    " For each, both hazard ratios lie on the same side of 1: the "
+                    "patients more likely to be lost were also more likely to die, so "
+                    "those lost to follow-up were the sicker ones. The adjusted site model "
+                    "absorbs the part of this that runs through its covariates; the "
+                    "Kaplan-Meier curves, crude and corrected, do not.")
+            caveats.append(sentence)
+
+    tipping = diagnostics.get("censoring-tipping-point")
+    if tipping is not None and not tipping.empty:
+        high = tipping.attrs.get("plausible", DEFAULT_TIPPING_PLAUSIBLE)
+        low = 1.0 / high
+        for group, delta in tipping.attrs["null_delta"].items():
+            if delta is None:
+                continue
+            rows = tipping[tipping["censored_group"] == group]
+            flips = rows[(rows["p"] < ALPHA)]
+            flip_text = "; ".join(
+                f"delta = {r.delta:.3g} (HR {r.HR:.3f}, {fmt_p_phrase(r.p)})"
+                for r in flips.itertuples())
+            sentence = (
+                f"If the censored patients of {group} died at delta times the rate "
+                f"the adjusted model predicts for comparable patients who stayed, "
+                f"the site HR would reach 1 at delta = {delta:.2f}.")
+            if flip_text:
+                sentence += (f" The site effect would be significant at alpha = "
+                             f"{ALPHA} for {flip_text}.")
+            if low <= delta <= high:
+                sentence += (
+                    f" That is inside the band taken as plausible ({low:.2g}-{high:g}, "
+                    f"--tipping-plausible), so censoring alone could account for the "
+                    f"adjusted site effect, and it cannot be attributed to entry "
+                    f"point.")
+            else:
+                sentence += (
+                    f" That is outside the band taken as plausible ({low:.2g}-{high:g}, "
+                    f"--tipping-plausible), so censoring alone is an unlikely "
+                    f"explanation of the adjusted site effect -- which does not by "
+                    f"itself make it entry point (see the tipping-point section).")
+            caveats.append(sentence)
+    return caveats
 
 
 def recommend_outcome_column(provenance, diagnostics, site_labels):
@@ -2382,8 +3140,8 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
     if rung is None:
         caveats.append(
             "No adjusted rung of the ladder could be fitted, so there is no evidence "
-            "here that separates case-mix from entry point. Treat the correction as "
-            "unverified.")
+            "here that separates case-mix from entry point or censoring. Treat the "
+            "correction as unverified.")
         return ("undetermined",
                 "Undetermined: the adjusted models could not be fitted on this selection.",
                 evidence, caveats)
@@ -2409,10 +3167,11 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
             "distinguishable from zero.")
         evidence.append(
             f"The adjusted confidence interval covers 0 at alpha = {ALPHA}, so what "
-            f"the crude comparison showed is explained by who the patients are, not "
-            f"by where they entered. Rescaling the outcome by it would remove "
-            f"prognostic signal that belongs to the covariates, and a downstream "
-            f"model that also adjusts for them would remove it twice.")
+            f"the crude comparison showed is accounted for by who the patients are, "
+            f"and what remains is too small to attribute to entry point or to "
+            f"censoring. Rescaling the outcome by it would remove prognostic signal "
+            f"that belongs to the covariates, and a downstream model that also "
+            f"adjusts for them would remove it twice.")
     else:
         verdict = "corrected"
         headline = (
@@ -2420,9 +3179,12 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
             "adjustment for case-mix.")
         evidence.append(
             f"The adjusted confidence interval excludes 0 at alpha = {ALPHA}, so a "
-            f"difference remains after case-mix is held fixed. Stratifying the "
-            f"baseline hazard by cohort is the equivalent alternative and needs no "
-            f"rescaling at all; pick one of the two, never both.")
+            f"difference remains after case-mix is held fixed. The corrected column "
+            f"treats that remainder as an entry-point artefact; if the censoring "
+            f"caveats below say informative censoring could produce it, that "
+            f"attribution is not established. Stratifying the baseline hazard by "
+            f"cohort is the equivalent alternative and needs no rescaling at all; "
+            f"pick one of the two, never both.")
 
     # Caveats, which qualify either verdict
     if pd.notna(rung["ph_p"]) and rung["ph_p"] < ALPHA:
@@ -2464,10 +3226,10 @@ def recommend_outcome_column(provenance, diagnostics, site_labels):
             caveats.append(
                 f"The censoring distributions differ between the groups "
                 f"(log-rank {fmt_p_phrase(p_censor)}): they were watched for "
-                f"different lengths of time, which can produce a survival "
-                f"difference on its own. Nothing here can rule that out: "
-                f"non-informative censoring is an assumption of the design, not a "
-                f"finding, and no diagnostic in this script can verify it.")
+                f"different lengths of time. That costs precision, not "
+                f"unbiasedness, as long as censoring is independent -- which the "
+                f"next points probe but cannot prove.")
+    caveats.extend(censoring_caveats(diagnostics))
     # The applied column need not agree with the recommendation
     if verdict == "raw" and provenance.get("mode", "").startswith("rescale"):
         caveats.append(
@@ -2655,16 +3417,31 @@ def report_method_and_references():
 
     REPORT.heading("What the correction assumes", level=3)
     REPORT.paragraph(
-        "A survival gap between two groups of cohorts has two possible sources, "
-        "and they call for opposite responses. If the clock starts at a different "
-        "event in one cohort, that is an artefact of record-keeping and should be "
-        "removed. If the cohorts genuinely hold different patients -- more "
-        "methylated MGMT, more gross-total resections, older patients -- that is a "
-        "real prognostic difference and must be kept, because removing it by "
-        "rescaling the outcome destroys the signal the analysis is trying to "
-        "measure. Worse, a downstream model that also adjusts for those covariates "
-        "would then remove the same effect twice. The adjustment ladder exists to "
-        "tell the two sources apart before anything is applied.")
+        "A survival gap between two groups of cohorts has three possible sources, "
+        "and they call for different responses. If the clock starts at a different "
+        "event in one cohort (entry point), that is an artefact of record-keeping "
+        "and should be removed. If the cohorts genuinely hold different patients "
+        "-- more methylated MGMT, more gross-total resections, older patients "
+        "(case-mix) -- that is a real prognostic difference and must be kept, "
+        "because removing it by rescaling the outcome destroys the signal the "
+        "analysis is trying to measure; worse, a downstream model that also "
+        "adjusts for those covariates would then remove the same effect twice. And "
+        "if one cohort lost its sicker patients to follow-up (informative "
+        "censoring), its survival looks better than it was; that is an artefact "
+        "too, but not one a constant rescaling of the survival times can undo.")
+    REPORT.paragraph(
+        "The correction can only express the first. So the diagnostics work by "
+        "elimination: the adjustment ladder takes out case-mix, the censoring "
+        "diagnostics ask how much of the remainder censoring could produce, and "
+        "only a remainder that survives both is a candidate for entry point -- "
+        "one candidate among several, since unrecorded case-mix, differences in "
+        "treatment after the clock starts, and chance leave the same trace. The "
+        "sources also overlap. Censoring that depends on the covariates is a "
+        "case-mix effect as far as the adjusted hazard ratio is concerned, and is "
+        "absorbed by the adjustment; censoring that depends on something "
+        "unrecorded is not. Entry point and censoring both act mostly in the first "
+        "months after the clock starts, so a remainder concentrated early is "
+        "consistent with either, and these data cannot tell them apart.")
     REPORT.paragraph(
         "The correction itself multiplies group 1's survival times by exp(logHR), "
         "leaving the reference group untouched. That is a single constant for "
@@ -2809,16 +3586,43 @@ def report_method_and_references():
         "widens in both directions; it is pointwise, not a simultaneous band over "
         "the whole curve.")
 
+    REPORT.heading("Censoring: what is measured and what is only stressed", level=3)
+    REPORT.paragraph(
+        "Under independent censoring the Cox partial likelihood is consistent "
+        "however differently the two groups were censored, so differential "
+        "follow-up costs precision rather than unbiasedness. Three diagnostics "
+        "probe the assumption. The reverse Kaplan-Meier [6] says how long each "
+        "group was watched; the person-time rates [11, 12] say how completely, "
+        "without counting a death as a loss. The censoring-hazard models say "
+        "whether censoring depends on the recorded covariates: if it does, the "
+        "adjusted site model is still consistent, because censoring is "
+        "independent given what it conditions on, but no marginal Kaplan-Meier "
+        "curve is. The tipping point [13] then asks how far censoring would have "
+        "to depart from independence to move the adjusted site effect. For each "
+        "censored subject \\(i\\) of the shifted group, with censoring time "
+        "\\(c_i\\) and linear predictor \\(\\eta_i\\) from the adjusted model, a "
+        "death time is drawn from")
+    REPORT.equation(
+        r"H_0(T_i^{*}) = H_0(c_i) + \frac{E_i}{\delta\, e^{\eta_i}},"
+        r"\qquad E_i \sim \operatorname{Exp}(1),")
+    REPORT.paragraph(
+        "with \\(H_0\\) the Breslow baseline recomputed under coefficients redrawn "
+        "from their sampling distribution for every imputation, and the site "
+        "coefficients of the refitted models pooled by Rubin's rules [14]. "
+        "\\(\\delta = 1\\) is independent censoring; \\(\\delta = 2\\) says the "
+        "patients lost to follow-up died twice as fast as comparable patients who "
+        "stayed. The shift is applied to each group in turn, and to every "
+        "censored subject of it -- administrative censorings included, since the "
+        "tables do not say which censorings were administrative.")
+
     REPORT.heading("What cannot be checked here", level=3)
     REPORT.paragraph(
-        "Nothing in this script can verify that censoring is non-informative -- "
-        "that the patients lost to follow-up were not systematically sicker in one "
-        "group. That is an assumption of the design, not a finding, and if it "
-        "fails the bias sits inside every estimate above. Under independent "
-        "censoring the Cox partial likelihood is consistent however differently the "
-        "two groups were censored, so differential follow-up costs precision rather "
-        "than unbiasedness; the reverse-Kaplan-Meier table [6] reports the "
-        "imbalance so it can be judged, but it cannot rule the problem out.")
+        "Whether censoring depends on something nobody recorded. UCSF records no "
+        "KPS at all, and performance status is the obvious reason a patient stops "
+        "returning to the centre that diagnosed them. The tipping point bounds "
+        "how much that could matter; it cannot say which delta is true. If "
+        "censoring is informative beyond the covariates, the bias sits inside "
+        "every estimate above.")
 
     REPORT.heading("Estimation details", level=3)
     REPORT.paragraph(
@@ -2856,6 +3660,17 @@ def report_method_and_references():
         "Poelsterl S (2020). scikit-survival: a library for time-to-event analysis "
         "built on top of scikit-learn. Journal of Machine Learning Research "
         "21(212), 1-6.",
+        "Xue X, Agalliu I, Kim MY, Wang T, Lin J, Ghavamian R, Strickler HD (2017). "
+        "New methods for estimating follow-up rates in cohort studies. BMC Medical "
+        "Research Methodology 17, 155.",
+        "Clark TG, Altman DG, De Stavola BL (2002). Quantification of the "
+        "completeness of follow-up. The Lancet 359(9314), 1309-1310.",
+        "Jackson D, White IR, Seaman S, Evans H, Baisley K, Carpenter J (2014). "
+        "Relaxing the independent censoring assumption in the Cox proportional "
+        "hazards model using multiple imputation. Statistics in Medicine 33(27), "
+        "4681-4694.",
+        "Rubin DB (1987). Multiple Imputation for Nonresponse in Surveys. Wiley, "
+        "New York.",
     ])
 
 
@@ -2975,6 +3790,19 @@ def resolve_log_path(log_arg, RESULTS):
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
+def plausible_band(text):
+    """argparse type of --tipping-plausible: a float above 1.
+
+    Args:
+        text: The value as typed.
+    """
+    value = float(text)
+    if not value > 1.0:
+        raise argparse.ArgumentTypeError(f"must be above 1 (got {text}); the band is "
+                                         f"[1/B, B], so B = 1 would leave no band at all")
+    return value
+
+
 def parse_args(argv=None):
     """Parse the command line.
 
@@ -3037,6 +3865,15 @@ def parse_args(argv=None):
                         help="Display the figures as well as writing them to disk.")
     parser.add_argument("--seed", type=int, default=None,
                         help="Seed for the permutation and bootstrap draws.")
+    parser.add_argument("--tipping-plausible", type=plausible_band,
+                        default=DEFAULT_TIPPING_PLAUSIBLE, metavar="B",
+                        help="Band of delta, [1/B, B], the censoring tipping point "
+                             "treats as a plausible departure from independent "
+                             "censoring: lost patients dying up to B times as fast "
+                             "(or 1/B as fast) as comparable patients who stayed. A "
+                             "site effect that reaches HR = 1 inside it cannot be told "
+                             f"apart from informative censoring (default: "
+                             f"{DEFAULT_TIPPING_PLAUSIBLE:g}; must be above 1).")
     parser.add_argument("--log", nargs="?", const="", default=None, metavar="FILE",
                         help="Name of the text file the run is written to "
                              "(default: <RESULTS_DIR>/createDatabase_log.txt). Relative "

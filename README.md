@@ -201,22 +201,37 @@ likely to change a published number. Read this section before running it.
    coding. The script converts survival to days and recodes sex, MGMT and EOR onto common
    integer keys.
 3. **Estimates a site effect on survival.** The cohorts are split into two `site` groups:
-   a reference group (UCSF-PDGM by default) and the rest. Cohorts can differ in *when*
-   the survival clock starts, which is an artefact of record-keeping, and in *which
-   patients* they enrolled, which is real prognostic information. The script fits the
-   difference between the groups as a Cox log hazard ratio, optionally adjusted for
-   case-mix, and writes a second survival column rescaled by it.
+   a reference group (UCSF-PDGM by default) and the rest. The script fits the difference
+   between the groups as a Cox log hazard ratio, optionally adjusted for case-mix, and
+   writes a second survival column rescaled by it.
 4. **Checks whether that correction is justified.** Covariate balance, an adjustment
-   ladder, proportional-hazards tests, follow-up comparison and Kaplan–Meier curves — run
-   on every invocation, with no flag to skip them.
+   ladder, follow-up and censoring diagnostics, proportional-hazards tests and
+   Kaplan–Meier curves — run on every invocation, with no flag to skip them.
 5. **Recommends a survival column.** The run ends by saying whether to analyse the raw or
    the corrected survival times, and why.
+
+A survival difference between the site groups can come from three places, and they call
+for different responses:
+
+| Source | What it is | What to do with it |
+|---|---|---|
+| **Case-mix** | The cohorts enrolled different patients: older, fewer resections, less methylated MGMT. | Keep it. It is real prognostic information; adjust for the covariates downstream. |
+| **Entry point** | The survival clock starts at a different event in one cohort (preoperative MRI, diagnosis, surgery). | Remove it. This is what the corrected column is for. |
+| **Censoring** | One cohort lost more of its patients to follow-up, and the ones it lost were not like the ones it kept. | Neither. A constant rescaling cannot undo it; it can only be bounded. |
+
+The sources overlap, so the diagnostics work by elimination. The adjustment ladder takes
+out case-mix. The censoring diagnostics ask how much of what is left censoring could
+produce. Only what survives both is a candidate for entry point, which nothing in the
+data measures directly — and only a candidate: case-mix nobody recorded, differences in
+treatment after the clock starts, and chance leave the same trace. Ruling censoring out
+does not rule entry point in. Entry point and censoring both act mostly in the first
+months of follow-up, and these data cannot tell them apart.
 
 Everything the run finds goes into an HTML report; how to read it is
 [below](#reading-the-report). The methodological reasoning — what the correction assumes,
 how missing covariates are handled, the proportional-hazards tests and their equations,
-and the references — is written in the report itself, next to the numbers it produced,
-not here.
+the censoring sensitivity analysis, and the references — is written in the report itself
+(section 7), next to the numbers it produced, not here.
 
 ### Running it
 
@@ -251,7 +266,8 @@ correction in the table.
 | `--ladder-covariates` | Covariates the adjustment ladder walks (default: `--adjust-covariates` if given, else `age sex eor mgmt`). |
 | `--pairwise` | Also inspect every *pair* of cohorts, each with its own adjusted coefficient. Slow: it refits the permutation test per pair. |
 | `--output-name` | Base name (`<stem>`) of the table and everything named after it (default: `data-clinical_TD-tissues_<N>-cohorts`). |
-| `--n-perms`, `--seed` | Permutations for the concordance test, and their seed. |
+| `--n-perms`, `--seed` | Permutations for the concordance test, and the seed shared by those permutations and the censoring tipping-point imputations. |
+| `--tipping-plausible` | The band of δ, from 1/B to B, that the censoring tipping point treats as plausible (default 2, i.e. lost patients dying up to twice or half as fast as comparable patients who stayed). A site effect that reaches HR = 1 inside the band is reported as indistinguishable from informative censoring. A judgement, not an established threshold: set it to what is plausible for your cohorts. Must be above 1. |
 | `--format`, `--show` | Figure format (`pdf`, `svg`, `both`), and whether to display figures as they are made. |
 | `--log` | Rename the log file (default `createDatabase_log.txt`). The run is always logged; this only changes where. |
 | `--verbose` | Mirror the log to the terminal. |
@@ -290,22 +306,32 @@ In the output directory:
 
 ### Reading the report
 
-The report follows the order the analysis ran. What each part answers:
+The report follows the order the analysis ran, and its sections and subsections are
+numbered. What each part answers, numbered as in a run without `--pairwise`:
 
 | Section | The question it answers |
 |---|---|
-| **Balance and missingness** | How different are the two site groups to begin with? An absolute SMD above 0.10 marks an imbalance worth adjusting for; the missingness columns show which covariates a group never records. |
-| **Adjustment ladder** (+ forest plot) | How much of the site effect is case-mix? Each rung adds covariates, all on one fixed sample. A site coefficient that shrinks as covariates enter is being explained by who the patients were. |
-| **Proportional hazards** | Does the model the coefficient comes from hold? One test per term, with the raw and the Bonferroni-adjusted p. |
-| **Non-proportional terms** (figure) | Only when a term fails: how its effect drifts over follow-up. |
-| **Follow-up (reverse KM)** | Were the groups followed for equally long? |
-| **Site-effect figure** | Survival curves before and after rescaling, and the residual diagnostic for the applied model. |
-| **Kaplan–Meier curves** | Survival per cohort, before and after correction. The rows beneath read `at risk (right-censored)`. |
-| **Recommendation** | Which survival column to analyse, and what qualifies that verdict. |
-| **Method, and the choices behind it** | The assumptions, equations and references. |
+| **1. Cohorts** | Which cohorts form each site group, and how many subjects, events and censorings each contributes. |
+| **2. Survival before correction** | Kaplan–Meier survival per cohort on the raw times. The rows beneath read `at risk (right-censored)`. |
+| **3. Site diagnostics: case-mix, entry point or censoring?** | Which of the three sources produced the survival difference between the site groups? 3.1–3.2 measure case-mix, 3.3–3.6 censoring, and entry point is what is left. Subsections 3.1–3.7: |
+| 3.1 Balance and missingness | How different are the two site groups to begin with? An absolute SMD above 0.10 marks an imbalance worth adjusting for; the missingness columns show which covariates a group never records. |
+| 3.2 Adjustment ladder (+ forest plot) | How much of the site effect is case-mix? Each rung adds covariates, all on one fixed sample. A site coefficient that shrinks as covariates enter is being explained by who the patients were. |
+| 3.3 Follow-up (reverse KM) (+ figure) | Were the groups followed for equally long? Median potential follow-up per group, the reverse Kaplan–Meier curves, and a log-rank test on the censoring distributions. The rows beneath the curves read `right-censored (deaths)`: patients right-censored, and patients who died, before each month. |
+| 3.4 Completeness of follow-up | Were they followed equally *completely*? The fraction of the person-time owed by 12 and 24 months that was actually observed, per site group and per cohort inside a pooled group. Unlike the reverse KM, a death counts as complete follow-up, not as a loss. |
+| 3.5 What predicts censoring? | Were the patients lost to follow-up the sicker ones? A Cox model of the censoring hazard next to the model of death, per site group. The warning sign is `same_side = yes` on the covariates that predict censoring: both hazard ratios above 1, or both below, so the patients more likely to be lost were also more likely to die. A group with too few censored complete cases is not modelled, and the report says which cohorts its complete cases come from. |
+| 3.6 Tipping point for informative censoring (+ figure) | Could censoring alone produce, or erase, the site effect? The censored patients of one group are given plausible death times, as if after censoring they died δ times as fast as comparable patients who stayed (δ = 1 is the usual independent-censoring assumption), and the adjusted site model is refitted. The number to read is the δ at which the site HR reaches 1. Inside the band set by `--tipping-plausible` (0.5–2 by default), censoring alone could account for the site effect; outside it, censoring is an unlikely sole explanation — which still does not make the site effect entry point. |
+| 3.7 Proportional hazards (+ non-proportional terms figure) | Does the model the coefficient comes from hold? One test per term, with the raw and the Bonferroni-adjusted p; when a term fails, a figure of how its effect drifts over follow-up. |
+| **4. Site effect** | Survival curves before and after rescaling, and the residual diagnostic for the applied model. |
+| **5. Survival after correction** | Kaplan–Meier survival per cohort on the corrected times. |
+| **6. Recommendation** | Which survival column to analyse (6.1), and what qualifies that verdict (6.2). |
+| **7. Method, and the choices behind it** | The assumptions, equations and references, with the censoring diagnostics explained in 7.4 and what no diagnostic can check in 7.5. |
+| **8. Provenance** | The contents of `<stem>_site-correction.json`. |
+| **9. Run log** | Where the log file is; its contents are not embedded. |
 
-With `--pairwise`, the site-effect figure and the proportional-hazards section are
-repeated for every pair of cohorts. Hazard ratios are per native unit (one year of age, one KPS point).
+With `--pairwise`, a **Pairwise cohort comparisons** section is inserted as section 3 —
+the site-effect figure and the proportional-hazards table for every pair of cohorts —
+and every later section moves down one number. Hazard ratios are per native unit (one
+year of age, one KPS point).
 
 ### Choosing raw or corrected survival
 
@@ -315,19 +341,30 @@ The rule the script applies:
 > use the raw survival times** and adjust or stratify for cohort downstream. If it
 > excludes zero, the corrected column is defensible.
 
+A corrected verdict treats what remains after case-mix as entry point. The recommendation
+therefore also says whether censoring could account for that remainder (section 6.2); if
+it can, the verdict stands but its attribution to entry point does not.
+
 Practical consequences:
 
 - **The verdict belongs to the pool, not to the method.** A different `--cohorts` or
   `--site-reference` can land the other way, so re-run rather than reuse a verdict.
 - **The verdict can disagree with the column you applied.** The adjusted model is fitted
   on every run, so a crude correction can still end in a *raw* recommendation — and the
-  report says so. Both columns are always written; nothing downstream is obliged to use
+  report says so (section 6.2). Both columns are always written; nothing downstream is obliged to use
   the corrected one.
 - **Use one remedy, not both.** Rescaling survival and stratifying the Cox baseline by
   cohort correct the same difference; applying both removes it twice.
-- **Read the qualifications.** The recommendation lists what weakens it in that run:
-  terms failing proportional hazards, a small complete-case sample, remaining imbalance,
-  or differing follow-up.
+- **Read the qualifications.** The recommendation lists what weakens it in that run
+  (section 6.2): terms failing proportional hazards, a small complete-case sample,
+  remaining imbalance, differing or incomplete follow-up, censoring that tracks
+  prognosis, or a tipping point close to independent censoring.
+- **Censoring can be stressed, not verified.** The censoring diagnostics (3.3–3.6) show
+  whether follow-up was lost unevenly and how much informative censoring the adjusted
+  site effect can absorb. They cannot say whether censoring depends on something nobody
+  recorded — KPS, for one, is missing for all of UCSF-PDGM. A site effect that a δ inside
+  the `--tipping-plausible` band moves to HR = 1 is reported as indistinguishable from
+  informative censoring.
 
 ---
 
