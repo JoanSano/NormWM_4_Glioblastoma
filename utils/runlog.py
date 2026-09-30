@@ -80,16 +80,17 @@ def tee_stdout(path, echo=False):
             sys.stdout = original
 
 
-def resolve_log_path(log_arg, RESULTS):
+def resolve_log_path(log_arg, RESULTS, default="createDatabase_log.txt"):
     """The file the run is written to.
 
     Args:
         log_arg: The --log value: None or "" for the default name, otherwise the
             path asked for.
         RESULTS: Directory a relative path is resolved under.
+        default: File name used when `log_arg` is empty.
 
     Never None. The terminal shows only what `announce` puts there, so a run that
     wrote no log would leave no record of itself at all.
     """
-    path = log_arg or "createDatabase_log.txt"
+    path = log_arg or default
     return path if os.path.isabs(path) else f"{RESULTS}/{path}"

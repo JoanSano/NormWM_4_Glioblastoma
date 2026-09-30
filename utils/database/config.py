@@ -79,6 +79,12 @@ COHORTS = {
 }
 
 
+# Cohort names by id, for tables that only carry the `cohort` column
+COHORT_NAME_BY_ID = {spec["id"]: name for name, spec in COHORTS.items()}
+
+# One colour per site group, reference first; every site-level figure uses them
+SITE_COLORS = ("tab:green", "salmon")
+
 # ---------------------------------------------------------------------------
 # Clinical covariates the site-effect model may adjust for. `scale` divides a
 # continuous covariate before it enters the design; it is 1.0 throughout, so every

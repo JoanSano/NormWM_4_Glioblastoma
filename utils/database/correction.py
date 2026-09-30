@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 
+from utils.database.config import SITE_COLORS
 from utils.database.plots import inspect_survival_diffs_in_paired_cohorts
 from utils.database.site_model import estimate_site_logHR
 from utils.formatting import fmt_p_phrase, section
@@ -63,7 +64,7 @@ def apply_site_correction(database, args, RESULTS, site_labels, formats):
             cohorts=list(sites),
             RESULTS=RESULTS,
             name_cohort=site_labels,
-            colors=["tab:green", "salmon"],
+            colors=list(SITE_COLORS),
             N_cohorts=[int(n_site.loc[s]) for s in sites],
             covariate_col="site",
             n_perms=args.n_perms,

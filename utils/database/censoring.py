@@ -5,7 +5,7 @@ import pandas as pd
 from scipy import stats as scipy_stats
 from sksurv.compare import compare_survival
 
-from utils.database.config import (COHORTS, TIPPING_DELTAS, TIPPING_IMPUTATIONS,
+from utils.database.config import (COHORT_NAME_BY_ID, TIPPING_DELTAS, TIPPING_IMPUTATIONS,
                                    FOLLOWUP_HORIZONS_MONTHS, ADJUSTMENT_COVARIATES)
 from utils.database.site_model import complete_case_frame, fit_cox
 from utils.survival import (as_structured, breslow_cumulative_hazard, daysXmonth, km_curve,
@@ -110,11 +110,10 @@ def followup_completeness(data, site_labels, horizons=FOLLOWUP_HORIZONS_MONTHS,
     blocks = [(site_labels.get(s, s), data[data[site_col] == s])
               for s in sorted(data[site_col].dropna().unique())]
     if cohort_col in data.columns:
-        cohort_names = {spec["id"]: name for name, spec in COHORTS.items()}
         # Only inside a site group that pools several cohorts; a group of one
         # would repeat its own row
         pooled = data.groupby(site_col)[cohort_col].transform("nunique") > 1
-        blocks += [(f"  {cohort_names.get(c, c)}", data[data[cohort_col] == c])
+        blocks += [(f"  {COHORT_NAME_BY_ID.get(c, c)}", data[data[cohort_col] == c])
                    for c in sorted(data.loc[pooled, cohort_col].dropna().unique())]
 
     rows = []
@@ -181,7 +180,6 @@ def censoring_hazard_table(data, covariates, site_labels, site_col="site",
     complete cases come from and which covariate removes the rest.
     """
     rows, global_tests, composition = [], {}, {}
-    cohort_names = {spec["id"]: name for name, spec in COHORTS.items()}
     for site in sorted(data[site_col].dropna().unique()):
         label = site_labels.get(site, site)
         block = data[data[site_col] == site]
@@ -192,7 +190,7 @@ def censoring_hazard_table(data, covariates, site_labels, site_col="site",
             for c in sorted(block[cohort_col].dropna().unique()):
                 members = block[block[cohort_col] == c]
                 kept = int(members.index.isin(frame.index).sum())
-                part = f"{cohort_names.get(c, c)} {kept} of {len(members)}"
+                part = f"{COHORT_NAME_BY_ID.get(c, c)} {kept} of {len(members)}"
                 absent = [ADJUSTMENT_COVARIATES[k]["label"] for k in covariates
                           if pd.to_numeric(members[ADJUSTMENT_COVARIATES[k]["column"]],
                                            errors="coerce").isna().all()]

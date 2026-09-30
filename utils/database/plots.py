@@ -13,12 +13,13 @@ from sksurv.linear_model import CoxPHSurvivalAnalysis
 from tqdm import tqdm
 
 from utils.database.censoring import reverse_km_followup
-from utils.database.config import ALPHA, DEFAULT_TIPPING_PLAUSIBLE
+from utils.database.config import ALPHA, DEFAULT_TIPPING_PLAUSIBLE, SITE_COLORS
 from utils.database.site_model import build_site_design, fit_cox
 from utils.formatting import fmt_p_inline, fmt_p_phrase
 from utils.report import save_figure
 from utils.statistics import to_structured_array
-from utils.survival import as_structured, at_risk_and_censored, daysXmonth, draw_at_risk_table, km_curve
+from utils.survival import (as_structured, at_risk_and_censored, daysXmonth, draw_at_risk_table,
+                            draw_km, km_curve, style_km_axes, usable_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -65,18 +66,12 @@ def plot_cohort_survival(
     GROUP_STATS = []
     nums = np.empty(shape=(len(cohort_ids),), dtype=object)
     for i, cohort in enumerate(cohort_ids):
-        diag = full_data[full_data[covariate_col] == cohort]
-        diag = diag[~np.isnan(diag[status_col]) & ~np.isnan(diag[duration_col])]
+        diag = usable_rows(full_data[full_data[covariate_col] == cohort], duration_col, status_col)
 
         nums[i] = at_risk_and_censored(diag, months, duration_col, status_col)
 
-        time, survival_prob, conf_int = km_curve(diag, duration_col, status_col)
-        ax.step(time / daysXmonth, survival_prob, where="post", color=colors[i],
-                label=f"Cohort: {name_cohort[cohort]}", linewidth=2)
-        ax.fill_between(time / daysXmonth, conf_int[0], conf_int[1], alpha=0.10,
-                        step="post", color=colors[i])
-        for t in diag.loc[diag[status_col] == 0, duration_col].values:  # Censoring times
-            ax.plot(time[time == t] / daysXmonth, survival_prob[time == t], "|", color=colors[i])
+        draw_km(ax, diag, duration_col, status_col, colors[i],
+                f"Cohort: {name_cohort[cohort]}", band_alpha=0.10, linewidth=2)
 
         OS_STATS.extend([(st, ovs) for st, ovs in zip(diag[status_col] == 1, diag[duration_col].values)])
         GROUP_STATS.extend([i + 1 for _ in diag[duration_col].values])
@@ -96,17 +91,7 @@ def plot_cohort_survival(
                 bbox=dict(boxstyle="round", alpha=0.1), color="black")
 
     ax.set_ylim([-(0.085 + 0.06 * len(cohort_ids)), 1.1])
-    ax.set_xlim([-5, 75])
-    ax.set_xticks(range(0, months[-1] + 10, 10))
-    ax.set_xticklabels(range(0, months[-1] + 10, 10))
-    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
-    ax.set_yticklabels([0, 0.2, 0.4, 0.6, 0.8, 1])
-    ax.spines["left"].set_bounds(0, 1)
-    ax.spines["bottom"].set_bounds(0, months[-1])
-    ax.set_xlabel("Time (months)", fontsize=12)
-    ax.set_ylabel("Overall survival", fontsize=12)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.legend(frameon=False)
+    style_km_axes(ax, months)
     # After the ticks: set_xticks widens the limits past set_xlim when a tick sits
     # outside them, and the table is spaced against the limits that end up drawn
     draw_at_risk_table(ax, list(months), [nums[k] for k in range(len(cohort_ids))],
@@ -215,8 +200,7 @@ def inspect_survival_diffs_in_paired_cohorts(
     OS_STATS = []
     GROUP_STATS = []
     for i, cohort in enumerate(cohorts):
-        diag = full_data[full_data[covariate_col] == cohort]
-        diag = diag[~np.isnan(diag[status_col]) & ~np.isnan(diag[duration_col])]
+        diag = usable_rows(full_data[full_data[covariate_col] == cohort], duration_col, status_col)
 
         time, survival_prob, conf_int = km_curve(diag, duration_col, status_col)
         ax1.step(np.log(eps_ + time / daysXmonth), np.log(eps_ - np.log(eps_ + survival_prob)),
@@ -350,21 +334,16 @@ def inspect_survival_diffs_in_paired_cohorts(
     GROUP_STATS = []
     nums = np.empty(shape=(2,), dtype=object)
     for i, cohort in enumerate(cohorts):
-        diag = full_data[full_data[covariate_col] == cohort]
-        diag = diag[~np.isnan(diag[status_col]) & ~np.isnan(diag[duration_col])].copy()
+        diag = usable_rows(full_data[full_data[covariate_col] == cohort],
+                           duration_col, status_col).copy()
         diag[duration_col] = diag[duration_col] * np.exp(logHR_applied * i)
         # Computed on the rescaled times, so the row describes the curve drawn
         nums[i] = at_risk_and_censored(diag, months, duration_col, status_col)
 
-        time, survival_prob, conf_int = km_curve(diag, duration_col, status_col)
         kind = "adjusted" if logHR_override is not None else "crude"
         label = (f"{name_cohort[cohort]} corrected\n(log HR = {logHR_applied:.4f}, {kind})"
                  if i == 1 else f"{name_cohort[cohort]}")
-        ax2.step(time / daysXmonth, survival_prob, where="post", color=colors[i], label=label)
-        ax2.fill_between(time / daysXmonth, conf_int[0], conf_int[1], alpha=0.15,
-                         step="post", color=colors[i])
-        for t in diag.loc[diag[status_col] == 0, duration_col].values:  # Censoring times
-            ax2.plot(time[time == t] / daysXmonth, survival_prob[time == t], "|", color=colors[i])
+        draw_km(ax2, diag, duration_col, status_col, colors[i], label, band_alpha=0.15)
 
         OS_STATS_deSITE.extend([(st, ovs) for st, ovs in zip(diag[status_col] == 1, diag[duration_col].values)])
         GROUP_STATS.extend([i + 1 for _ in diag[duration_col].values])
@@ -377,27 +356,12 @@ def inspect_survival_diffs_in_paired_cohorts(
              bbox=dict(boxstyle="round", alpha=0.1), color="red" if p_val <= 0.05 else "black")
 
     # Overlay the uncorrected curve of the rescaled cohort
-    diag = full_data[full_data[covariate_col] == cohorts[1]]
-    diag = diag[~np.isnan(diag[status_col]) & ~np.isnan(diag[duration_col])]
-    time, survival_prob, conf_int = km_curve(diag, duration_col, status_col)
-    ax2.step(time / daysXmonth, survival_prob, where="post", color="gray", alpha=0.5,
-             label=f"{name_cohort[cohorts[1]]} uncorrected")
-    ax2.fill_between(time / daysXmonth, conf_int[0], conf_int[1], alpha=0.15, step="post", color="gray")
-    for t in diag.loc[diag[status_col] == 0, duration_col].values:  # Censoring times
-        ax2.plot(time[time == t] / daysXmonth, survival_prob[time == t], "|", color="gray")
+    diag = usable_rows(full_data[full_data[covariate_col] == cohorts[1]], duration_col, status_col)
+    draw_km(ax2, diag, duration_col, status_col, "gray",
+            f"{name_cohort[cohorts[1]]} uncorrected", band_alpha=0.15, alpha=0.5)
 
     ax2.set_ylim([-0.2, 1])
-    ax2.set_xlim([-5, 75])
-    ax2.set_xticks(range(0, months[-1] + 10, 10))
-    ax2.set_xticklabels(range(0, months[-1] + 10, 10))
-    ax2.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
-    ax2.set_yticklabels([0, 0.2, 0.4, 0.6, 0.8, 1])
-    ax2.spines["left"].set_bounds(0, 1)
-    ax2.spines["bottom"].set_bounds(0, months[-1])
-    ax2.set_xlabel("Time (months)", fontsize=12)
-    ax2.set_ylabel("Overall survival", fontsize=12)
-    ax2.spines[["top", "right"]].set_visible(False)
-    ax2.legend(frameon=False)
+    style_km_axes(ax2, months)
     draw_at_risk_table(ax2, list(months), [nums[0], nums[1]], colors)
 
     fig.suptitle(f"{name_cohort[cohorts[0]]} vs. {name_cohort[cohorts[1]]}", fontweight="bold")
@@ -500,7 +464,7 @@ def plot_adjustment_ladder(ladder, RESULTS, stem, formats, show_plot=True,
 
 def plot_reverse_km(data, site_labels, RESULTS, stem, formats, show_plot=True,
                     site_col="site", duration_col="OS (days)", status_col="status",
-                    colors=("tab:green", "salmon"),
+                    colors=SITE_COLORS,
                     title="Follow-up by site group (reverse Kaplan-Meier)"):
     """Reverse Kaplan-Meier curves, one per site group, with the log-rank test.
 
@@ -577,7 +541,7 @@ def plot_reverse_km(data, site_labels, RESULTS, stem, formats, show_plot=True,
 
 def plot_tipping_point(tipping, RESULTS, stem, formats, show_plot=True,
                        plausible=DEFAULT_TIPPING_PLAUSIBLE,
-                       colors=("tab:green", "salmon"),
+                       colors=SITE_COLORS,
                        title="How much informative censoring the site effect absorbs"):
     """Pooled site HR against delta, one line per group whose censoring is shifted.
 

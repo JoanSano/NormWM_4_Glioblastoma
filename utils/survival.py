@@ -6,8 +6,6 @@ from sksurv.nonparametric import kaplan_meier_estimator
 
 
 daysXmonth = 365 / 12
-
-
 daysXweek = 7
 
 
@@ -43,6 +41,62 @@ def km_curve(data, duration_col, status_col):
     survival_prob = np.insert(survival_prob, 0, 1)
     conf_int = np.insert(conf_int, 0, 1, axis=1)
     return time, survival_prob, conf_int
+
+
+def usable_rows(data, duration_col, status_col):
+    """The rows a Kaplan-Meier curve can use: both a duration and a status recorded.
+
+    Args:
+        data: Table of subjects.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+    """
+    return data[~np.isnan(data[status_col]) & ~np.isnan(data[duration_col])]
+
+
+def draw_km(ax, data, duration_col, status_col, color, label, band_alpha, **step_kw):
+    """Draw one Kaplan-Meier curve in months: the step, its band and censoring ticks.
+
+    Args:
+        ax: Axes to draw on.
+        data: Subjects of the curve, already restricted by `usable_rows`; the
+            durations are whatever the curve plots, rescaled or not.
+        duration_col: Column holding the follow-up time, in days.
+        status_col: Column holding the 0/1 event indicator.
+        color: Colour of the step, the band and the ticks.
+        label: Legend entry of the step.
+        band_alpha: Opacity of the log-log confidence band.
+        **step_kw: Further styling of the step alone, e.g. linewidth or alpha.
+    """
+    time, survival_prob, conf_int = km_curve(data, duration_col, status_col)
+    ax.step(time / daysXmonth, survival_prob, where="post", color=color, label=label,
+            **step_kw)
+    ax.fill_between(time / daysXmonth, conf_int[0], conf_int[1], alpha=band_alpha,
+                    step="post", color=color)
+    for t in data.loc[data[status_col] == 0, duration_col].values:  # Censoring times
+        ax.plot(time[time == t] / daysXmonth, survival_prob[time == t], "|", color=color)
+
+
+def style_km_axes(ax, months):
+    """Axes of an overall-survival panel: 0-75 months, ticks every 10, no box.
+
+    Args:
+        ax: Axes holding the curves; the y limits are the caller's, since they
+            depend on how many at-risk rows go underneath.
+        months: Time points (months) of the numbers-at-risk row; the last one
+            bounds the bottom spine.
+    """
+    ax.set_xlim([-5, 75])
+    ax.set_xticks(range(0, months[-1] + 10, 10))
+    ax.set_xticklabels(range(0, months[-1] + 10, 10))
+    ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+    ax.set_yticklabels([0, 0.2, 0.4, 0.6, 0.8, 1])
+    ax.spines["left"].set_bounds(0, 1)
+    ax.spines["bottom"].set_bounds(0, months[-1])
+    ax.set_xlabel("Time (months)", fontsize=12)
+    ax.set_ylabel("Overall survival", fontsize=12)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False)
 
 
 def km_median(time, survival_prob):
