@@ -416,7 +416,7 @@ Before running Step 4, check which survival column
 │   ├── TDMaps-extraction.py        #           TDI / L-TDI extraction
 │   └── morphology-extraction.py    #           compartment volumes
 │
-├── createDatabase.py               #   Step 3: pooled clinical + imaging table, report
+├── createDatabase.py               #   Step 3: pooled clinical + imaging table, report (CLI)
 │
 ├── TDIndices_stats.py              #   Step 4: statistics and modelling
 ├── LTDIndices_stats.py
@@ -428,7 +428,21 @@ Before running Step 4, check which survival column
 ├── segmentation_TCGA_example.ipynb # optional: BraTS segmentation of unlabelled scans
 ├── utils/
 │   ├── metrics.py                  # survival metrics, quantile OS, concordance
-│   └── statistics.py               # BB procedure, bootstrap/permutation tests, DeLong
+│   ├── statistics.py               # BB procedure, bootstrap/permutation tests, DeLong
+│   ├── survival.py                 # Kaplan-Meier curves, at-risk tables, risk-set helpers
+│   ├── formatting.py               # p-value formatting and log banners
+│   ├── report.py                   # self-contained HTML report
+│   ├── runlog.py                   # quiet runs: stdout to a log file
+│   └── database/                   # Step 3 internals, used by createDatabase.py
+│       ├── config.py               #   columns, encodings, cohorts, covariates, thresholds
+│       ├── cohorts.py              #   per-cohort harmonisation and site partition
+│       ├── site_model.py           #   site-effect Cox models, balance, proportional hazards
+│       ├── censoring.py            #   follow-up and censoring diagnostics
+│       ├── plots.py                #   survival and diagnostic figures
+│       ├── diagnostics.py          #   the site-diagnostics report section
+│       ├── correction.py           #   the applied correction and its provenance
+│       ├── recommendation.py       #   raw vs corrected survival verdict
+│       └── method_text.py          #   method notes and references of the report
 └── requirements.txt
 ```
 
