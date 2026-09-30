@@ -13,16 +13,16 @@ resulting tract-density maps summarise, in a single number, how much of the brai
 structural wiring a lesion disturbs — including wiring far away from the lesion itself.
 This reframes glioblastoma as a network disease rather than a focal one.
 
-> This code is research code under active development. It is shared for transparency and
+> This is research code under active development. It is shared for transparency and
 > reuse, and is **not yet intended as a standalone, turnkey solution**. Paths are largely
-> hard-coded to the authors' storage layout and will need adapting.
+> hard-coded to the original storage layout and require adaptation.
 
 ---
 
 ## Table of contents
 
 - [Overview](#overview)
-- [Before you start](#before-you-start)
+- [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Data](#data)
   - [Template and tractogram](#template-and-tractogram)
@@ -60,7 +60,7 @@ cohort-agnostic and run from the repository root.
 
 ---
 
-## Before you start
+## Prerequisites
 
 ### Installation
 
@@ -80,7 +80,7 @@ Optional extras (tumour segmentation, streamline conversion, consensus community
 detection) are listed, commented out, at the bottom of `requirements.txt`.
 
 Steps 1–2 also call the following neuroimaging tools directly. They are not
-pip-installable and must be on your `PATH`:
+pip-installable and must be available on the system `PATH`:
 
 | Software | Used for | Commands |
 |---|---|---|
@@ -133,17 +133,17 @@ cd UCSF-PDGM
 python quality-control_registration-MNI.py     # flags failed registrations for review
 ```
 
-Repeat for every cohort you intend to pool. RHUH-GBM registers its baseline timepoint with
+The procedure is repeated for every cohort to be pooled. RHUH-GBM registers its baseline timepoint with
 `normalizeT0_MNI.sh` instead.
 
 **Where the output goes.** The script is silent in the terminal: once the MNI output
 folder (`MNI_DIR`) exists, everything it prints is redirected there, to
 `Logs-NormalizeMNI.txt` (standard output) and `Errors-NormalizeMNI.txt` (standard
-error). Both are overwritten on every run. Check the errors file first if a subject is
-missing from the output.
+error). Both are overwritten on every run. If a subject is missing from the output, the
+errors file is the first place to look.
 
-**Before moving on.** Look at the registrations the QC script flags. A failed warp puts
-the tumour on the wrong tracts, and nothing downstream will notice.
+**Before proceeding.** Registrations flagged by the QC script require visual inspection. A
+failed warp places the tumour on the wrong tracts, and no downstream step detects the error.
 
 ---
 
@@ -189,8 +189,8 @@ on every run.
 
 ## Step 3 — Database assembly
 
-`createDatabase.py` is the least self-explanatory part of the repository, and the one most
-likely to change a published number. Read this section before running it.
+`createDatabase.py` is the least self-explanatory component of the repository, and the one
+most likely to alter a published result. This section should be read before running it.
 
 ### What it does
 
@@ -213,16 +213,16 @@ likely to change a published number. Read this section before running it.
 A survival difference between the site groups can come from three places, and they call
 for different responses:
 
-| Source | What it is | What to do with it |
+| Source | Description | Appropriate response |
 |---|---|---|
-| **Case-mix** | The cohorts enrolled different patients: older, fewer resections, less methylated MGMT. | Keep it. It is real prognostic information; adjust for the covariates downstream. |
-| **Entry point** | The survival clock starts at a different event in one cohort (preoperative MRI, diagnosis, surgery). | Remove it. This is what the corrected column is for. |
-| **Censoring** | One cohort lost more of its patients to follow-up, and the ones it lost were not like the ones it kept. | Neither. A constant rescaling cannot undo it; it can only be bounded. |
+| **Case-mix** | The cohorts enrolled different patients: older, fewer resections, less methylated MGMT. | Retain. It is genuine prognostic information, to be adjusted for downstream. |
+| **Entry point** | The survival clock starts at a different event in one cohort (preoperative MRI, diagnosis, surgery). | Remove. This is the purpose of the corrected column. |
+| **Censoring** | One cohort lost more of its patients to follow-up, and the ones it lost were not like the ones it kept. | Neither retain nor remove. A constant rescaling cannot undo it; it can only be bounded. |
 
 The sources overlap, so the diagnostics work by elimination. The adjustment ladder takes
 out case-mix. The censoring diagnostics ask how much of what is left censoring could
 produce. Only what survives both is a candidate for entry point, which nothing in the
-data measures directly — and only a candidate: case-mix nobody recorded, differences in
+data measures directly — and only a candidate: unrecorded case-mix, differences in
 treatment after the clock starts, and chance leave the same trace. Ruling censoring out
 does not rule entry point in. Entry point and censoring both act mostly in the first
 months of follow-up, and these data cannot tell them apart.
@@ -254,8 +254,8 @@ python createDatabase.py /path/to/Glioblastomas RESULTS-GBM_2-cohorts \
 ```
 
 The recommendation at the end of the run is based on the adjusted model, so
-`--adjust-covariates` is the setting to use unless you specifically want the crude
-correction in the table.
+`--adjust-covariates` is the recommended setting unless the crude correction is
+specifically required in the table.
 
 | Flag | What it does |
 |---|---|
@@ -267,16 +267,16 @@ correction in the table.
 | `--pairwise` | Also inspect every *pair* of cohorts, each with its own adjusted coefficient. Slow: it refits the permutation test per pair. |
 | `--output-name` | Base name (`<stem>`) of the table and everything named after it (default: `data-clinical_TD-tissues_<N>-cohorts`). |
 | `--n-perms`, `--seed` | Permutations for the concordance test, and the seed shared by those permutations and the censoring tipping-point imputations. |
-| `--tipping-plausible` | The band of δ, from 1/B to B, that the censoring tipping point treats as plausible (default 2, i.e. lost patients dying up to twice or half as fast as comparable patients who stayed). A site effect that reaches HR = 1 inside the band is reported as indistinguishable from informative censoring. A judgement, not an established threshold: set it to what is plausible for your cohorts. Must be above 1. |
+| `--tipping-plausible` | The band of δ, from 1/B to B, that the censoring tipping point treats as plausible (default 2, i.e. lost patients dying up to twice or half as fast as comparable patients who stayed). A site effect that reaches HR = 1 inside the band is reported as indistinguishable from informative censoring. A judgement, not an established threshold: it should reflect what is plausible for the cohorts at hand. Must be above 1. |
 | `--format`, `--show` | Figure format (`pdf`, `svg`, `both`), and whether to display figures as they are made. |
 | `--log` | Rename the log file (default `createDatabase_log.txt`). The run is always logged; this only changes where. |
 | `--verbose` | Mirror the log to the terminal. |
 
-See `python createDatabase.py --help` for the full description.
+The full description is available via `python createDatabase.py --help`.
 
 ### What it writes
 
-**The terminal stays quiet.** A run announces where it is writing, and when it finishes
+**Terminal output is minimal.** A run announces where it is writing, and when it finishes
 prints the files it produced and the recommended survival column:
 
 ```
@@ -291,16 +291,16 @@ Assembled <N> subjects from <K> cohorts.
 ```
 
 Everything in between — sample sizes, fits, tests and warnings — goes to the log. Progress
-bars still appear, on stderr, so a long run shows that it is alive.
+bars still appear on stderr, so that long runs report their progress.
 
 In the output directory:
 
 | File | Contents |
 |---|---|
-| `<stem>_report.html` | **Open this first.** Every figure, every diagnostic table, the recommendation and the method, in one self-contained file. Print it to PDF from the browser if needed. |
+| `<stem>_report.html` | **The primary output.** Every figure, every diagnostic table, the recommendation and the method, in one self-contained file, printable to PDF from the browser. |
 | `<stem>.csv` / `.tsv` | The pooled table, with both `OS (days)` and `OS (days) - corrected`, and the `site correction factor` each subject's time was multiplied by (divide by it to recover the raw time). |
 | `createDatabase_log.txt` | The full run, line by line. The report points to it rather than embedding it. |
-| `<stem>_site-correction.json` | Provenance: the coefficient and its CI, the model design, the site partition, and the recommended column (`recommended_outcome`). Quote this in a methods section. |
+| `<stem>_site-correction.json` | Provenance: the coefficient and its CI, the model design, the site partition, and the recommended column (`recommended_outcome`). Suitable for reporting in a methods section. |
 | `keys-maps.json` | The integer codes used for the categorical variables. |
 | `OS-stats/` | The figures as `.pdf`/`.svg`, and every diagnostic table as `Site-diagnostics_*.csv`. |
 
@@ -335,7 +335,7 @@ year of age, one KPS point).
 
 ### Choosing raw or corrected survival
 
-The rule the script applies:
+The decision rule implemented in the script:
 
 > Fit the site effect adjusted for case-mix. **If its 95% confidence interval covers zero,
 > use the raw survival times** and adjust or stratify for cohort downstream. If it
@@ -348,21 +348,21 @@ it can, the verdict stands but its attribution to entry point does not.
 Practical consequences:
 
 - **The verdict belongs to the pool, not to the method.** A different `--cohorts` or
-  `--site-reference` can land the other way, so re-run rather than reuse a verdict.
-- **The verdict can disagree with the column you applied.** The adjusted model is fitted
+  `--site-reference` can reach the opposite verdict, so each pool requires its own run.
+- **The verdict can disagree with the applied correction.** The adjusted model is fitted
   on every run, so a crude correction can still end in a *raw* recommendation — and the
   report says so (section 6.2). Both columns are always written; nothing downstream is obliged to use
   the corrected one.
-- **Use one remedy, not both.** Rescaling survival and stratifying the Cox baseline by
+- **One remedy, not both.** Rescaling survival and stratifying the Cox baseline by
   cohort correct the same difference; applying both removes it twice.
-- **Read the qualifications.** The recommendation lists what weakens it in that run
+- **Qualifications accompany the verdict.** The recommendation lists what weakens it in that run
   (section 6.2): terms failing proportional hazards, a small complete-case sample,
   remaining imbalance, differing or incomplete follow-up, censoring that tracks
   prognosis, or a tipping point close to independent censoring.
 - **Censoring can be stressed, not verified.** The censoring diagnostics (3.3–3.6) show
   whether follow-up was lost unevenly and how much informative censoring the adjusted
-  site effect can absorb. They cannot say whether censoring depends on something nobody
-  recorded — KPS, for one, is missing for all of UCSF-PDGM. A site effect that a δ inside
+  site effect can absorb. They cannot establish whether censoring depends on unrecorded
+  variables — KPS, for one, is missing for all of UCSF-PDGM. A site effect that a δ inside
   the `--tipping-plausible` band moves to HR = 1 is reported as indistinguishable from
   informative censoring.
 
@@ -419,7 +419,7 @@ python LTDI-Volume_comparison.py /path/to/main/dir \
 ```
 
 Three flags change the results:
-- `--duration-col` chooses column in which event times are stored.
+- `--duration-col` selects the column holding the event times.
 - `--stratify-for` stratifies every in-sample Cox model by a column (default `cohort`; `none`
   switches it off).
   - The cross-validation never stratifies. When stratifying by `cohort` or `site`, it uses
@@ -440,8 +440,8 @@ outputs are:
 - a log;
 - a short HTML report that opens with the settings of the run.
 
-Before running Step 4, check which survival column
-[Step 3 recommended](#choosing-raw-or-corrected-survival) and point the analyses at it.
+The Step 4 analyses should use the survival column
+[recommended by Step 3](#choosing-raw-or-corrected-survival).
 
 ---
 
@@ -499,7 +499,7 @@ for cohort-level checks.
 
 ## Citation
 
-If you use this code, consider the two methodological papers.
+Work using this code should cite the following methodological papers.
 
 **The L-TDI — definition, validation and survival stratification:**
 
@@ -569,9 +569,9 @@ If you use this code, consider the two methodological papers.
 
 ## Acknowledgements
 
-This work would not exist without the groups who made the following resources public. If
-you reuse this pipeline, please cite the datasets and atlases you actually use, in addition
-to the papers above.
+This work relies on resources made publicly available by the groups below. Reuse of this
+pipeline should cite the datasets and atlases actually used, in addition to the papers
+above.
 
 ### Patient cohorts
 
@@ -649,6 +649,5 @@ tracts (XTRACT) and cortical lobes (USCLobes / BCI-DNI).
 
 ## Contact
 
-Questions, problems and reuse: open an issue, contact
-[Joan Falcó-Roget](https://github.com/JoanSano), or
-send an email joan.falcoroget@gmail.com.
+Questions, bug reports and reuse enquiries can be submitted as a GitHub issue or addressed
+to [Joan Falcó-Roget](https://github.com/JoanSano) at joan.falcoroget@gmail.com.
