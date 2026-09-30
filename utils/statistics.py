@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+from scipy.stats import chi2
 from statsmodels.stats.multitest import multipletests
 from types import SimpleNamespace
 from tqdm import tqdm

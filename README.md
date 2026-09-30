@@ -314,7 +314,7 @@ numbered. What each part answers, numbered as in a run without `--pairwise`:
 | **1. Cohorts** | Which cohorts form each site group, and how many subjects, events and censorings each contributes. |
 | **2. Survival before correction** | Kaplan–Meier survival per cohort on the raw times. The rows beneath read `at risk (right-censored)`. |
 | **3. Site diagnostics: case-mix, entry point or censoring?** | Which of the three sources produced the survival difference between the site groups? 3.1–3.2 measure case-mix, 3.3–3.6 censoring, and entry point is what is left. Subsections 3.1–3.7: |
-| 3.1 Balance and missingness | How different are the two site groups to begin with? An absolute SMD above 0.10 marks an imbalance worth adjusting for; the missingness columns show which covariates a group never records. |
+| 3.1 Balance and missingness | How different are the two site groups to begin with? The SMD (standardised mean difference) is the difference between the groups' means divided by their pooled SD, √((s₀² + s₁²)/2) with each s² the unbiased (n − 1) sample variance; a categorical covariate is compared per level, so its means are proportions. An absolute SMD above 0.10 marks an imbalance worth adjusting for; the missingness columns show which covariates a group never records. |
 | 3.2 Adjustment ladder (+ forest plot) | How much of the site effect is case-mix? Each rung adds covariates, all on one fixed sample. A site coefficient that shrinks as covariates enter is being explained by who the patients were. |
 | 3.3 Follow-up (reverse KM) (+ figure) | Were the groups followed for equally long? Median potential follow-up per group, the reverse Kaplan–Meier curves, and a log-rank test on the censoring distributions. The rows beneath the curves read `right-censored (deaths)`: patients right-censored, and patients who died, before each month. |
 | 3.4 Completeness of follow-up | Were they followed equally *completely*? The fraction of the person-time owed by 12 and 24 months that was actually observed, per site group and per cohort inside a pooled group. Unlike the reverse KM, a death counts as complete follow-up, not as a loss. |
@@ -416,7 +416,7 @@ Before running Step 4, check which survival column
 │   ├── TDMaps-extraction.py        #           TDI / L-TDI extraction
 │   └── morphology-extraction.py    #           compartment volumes
 │
-├── createDatabase.py               #   Step 3: pooled clinical + imaging table, report
+├── createDatabase.py               #   Step 3: pooled clinical + imaging table, report (CLI)
 │
 ├── TDIndices_stats.py              #   Step 4: statistics and modelling
 ├── LTDIndices_stats.py
@@ -428,7 +428,21 @@ Before running Step 4, check which survival column
 ├── segmentation_TCGA_example.ipynb # optional: BraTS segmentation of unlabelled scans
 ├── utils/
 │   ├── metrics.py                  # survival metrics, quantile OS, concordance
-│   └── statistics.py               # BB procedure, bootstrap/permutation tests, DeLong
+│   ├── statistics.py               # BB procedure, bootstrap/permutation tests, DeLong
+│   ├── survival.py                 # Kaplan-Meier curves, at-risk tables, risk-set helpers
+│   ├── formatting.py               # p-value formatting and log banners
+│   ├── report.py                   # self-contained HTML report
+│   ├── runlog.py                   # quiet runs: stdout to a log file
+│   └── database/                   # Step 3 internals, used by createDatabase.py
+│       ├── config.py               #   columns, encodings, cohorts, covariates, thresholds
+│       ├── cohorts.py              #   per-cohort harmonisation and site partition
+│       ├── site_model.py           #   site-effect Cox models, balance, proportional hazards
+│       ├── censoring.py            #   follow-up and censoring diagnostics
+│       ├── plots.py                #   survival and diagnostic figures
+│       ├── diagnostics.py          #   the site-diagnostics report section
+│       ├── correction.py           #   the applied correction and its provenance
+│       ├── recommendation.py       #   raw vs corrected survival verdict
+│       └── method_text.py          #   method notes and references of the report
 └── requirements.txt
 ```
 
