@@ -15,6 +15,10 @@ else
     mkdir "$MNI_DIR"
 fi
 
+# Redirect standard output
+exec 1> $MNI_DIR"/Logs-NormalizeMNI.txt"
+exec 2> $MNI_DIR"/Errors-NormalizeMNI.txt"
+
 N=4
 
 # Iterate over each subject directory

@@ -64,6 +64,10 @@ if [[ ! -d $DESTINATION_MAPS ]]; then
     mkdir $DESTINATION_MAPS
 fi
 
+# Redirect standard output
+exec 1> $DESTINATION_MAPS"/Logs-TDMaps.txt"
+exec 2> $DESTINATION_MAPS"/Errors-TDMaps.txt"
+
 # Create the demographics header
 TD_LABELS="Whole TDMap,Whole lesion TDMap,Core TDMap,Core lesion TDMap,Non-enhancing TDMap,Non-enhancing lesion TDMap,Enhancing TDMap,Enhancing lesion TDMap,Core+Enhancing TDMap,Core+Enhancing lesion TDMap" 
 echo "ID,Sex,Age at MRI,WHO CNS Grade,Final pathologic diagnosis (WHO 2021),MGMT status,MGMT index,1p/19q,IDH,1-dead 0-alive,OS,EOR,Biopsy prior to imaging,BraTS21 ID,BraTS21 Segmentation Cohort,BraTS21 MGMT Cohort,# Labels,${TD_LABELS}" > $DEMOGRAPHICS
