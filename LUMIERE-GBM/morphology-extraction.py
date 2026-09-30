@@ -1,8 +1,6 @@
-import numpy as np
 import pandas as pd
 import nibabel as nib
 import argparse
-import glob
 
 if __name__ == '__main__':
     # Get the subject to process

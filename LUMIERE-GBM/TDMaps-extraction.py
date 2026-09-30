@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import nibabel as nib
 import argparse
-import glob
 import os
 
 if __name__ == '__main__':
