@@ -136,6 +136,12 @@ python quality-control_registration-MNI.py     # flags failed registrations for 
 Repeat for every cohort you intend to pool. RHUH-GBM registers its baseline timepoint with
 `normalizeT0_MNI.sh` instead.
 
+**Where the output goes.** The script is silent in the terminal: once the MNI output
+folder (`MNI_DIR`) exists, everything it prints is redirected there, to
+`Logs-NormalizeMNI.txt` (standard output) and `Errors-NormalizeMNI.txt` (standard
+error). Both are overwritten on every run. Check the errors file first if a subject is
+missing from the output.
+
 **Before moving on.** Look at the registrations the QC script flags. A failed warp puts
 the tumour on the wrong tracts, and nothing downstream will notice.
 
@@ -174,6 +180,10 @@ head to head.
 
 `<s>` is the `-s` threshold (default 0 everywhere), and **Step 3 must be given the same
 value** (`--stream-th`, also default 0), or it will look for a file that does not exist.
+
+As in Step 1, nothing is printed to the terminal. Progress goes to `Logs-TDMaps.txt` and
+errors to `Errors-TDMaps.txt`, both in the same tract-density folder and both overwritten
+on every run.
 
 ---
 
