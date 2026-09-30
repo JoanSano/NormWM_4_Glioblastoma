@@ -24,7 +24,7 @@ if __name__ == '__main__':
     ID_column = demographics.columns[0]
     row = pd.DataFrame(demographics.loc[demographics[ID_column]==subject_ID])
     if row.empty:
-        raise Warning("______ No entry for the subject was found in the clinical data entered in --demographics ______")
+        raise Warning(f"______ No entry for subject {subject_ID} was found in the clinical data entered in --demographics ______")
     keys = { 
         # Do not alter the order of these entries, they are in correspondance to the TDMaps.sh script
         "tissue-whole_TDMap": "Whole TDMap",
