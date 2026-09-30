@@ -244,7 +244,7 @@ def inspect_survival_diffs_in_paired_cohorts(
     Cmodel.fit(X, y)
     c_index = Cmodel.score(X, y)
     pop = []
-    for _ in tqdm(range(n_perms)):
+    for _ in tqdm(range(n_perms), desc=f"Cohorts: {name_cohort[cohorts[0]]} vs. {name_cohort[cohorts[1]]}"):
         perm_y = np.random.permutation(y)
         p_Cmodel = CoxPHSurvivalAnalysis()
         p_Cmodel.fit(X, perm_y)
