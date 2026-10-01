@@ -24,7 +24,8 @@ class Report:
         Args:
             text: Heading text, without a number; sections and subsections are
                 numbered when the report is rendered.
-            level: HTML heading level, 2 for a section and 3 for a subsection.
+            level: HTML heading level: 2 for a section, 3 for a subsection and
+                4 for a subsection within one.
         """
         self.blocks.append(("heading", (level, text)))
 
@@ -113,16 +114,20 @@ class Report:
             parts.append(f'<p class="subtitle">{html.escape(subtitle)}</p>')
         # Numbered here rather than by the callers, so a section that only some
         # runs produce (--pairwise) renumbers everything after it consistently
-        section = subsection = 0
+        section = subsection = subsubsection = 0
         for kind, payload in self.blocks:
             if kind == "heading":
                 level, text = payload
                 if level == 2:
-                    section, subsection = section + 1, 0
+                    section, subsection, subsubsection = section + 1, 0, 0
                     number, anchor = f"{section}.", f"sec-{section}"
-                else:
-                    subsection += 1
+                elif level == 3:
+                    subsection, subsubsection = subsection + 1, 0
                     number, anchor = f"{section}.{subsection}", f"sec-{section}-{subsection}"
+                else:
+                    subsubsection += 1
+                    number = f"{section}.{subsection}.{subsubsection}"
+                    anchor = f"sec-{section}-{subsection}-{subsubsection}"
                 parts.append(f'<h{level} id="{anchor}">{number} '
                              f"{html.escape(text)}</h{level}>")
             elif kind == "paragraph":
@@ -198,6 +203,7 @@ _REPORT_HEAD = """<!DOCTYPE html>
   h2 {{ font-size: 1.25rem; margin-top: 40px; padding-top: 12px;
         border-top: 2px solid var(--accent); }}
   h3 {{ font-size: 1.05rem; margin-top: 28px; color: var(--muted); }}
+  h4 {{ font-size: 0.97rem; margin-top: 22px; color: var(--muted); font-weight: 600; }}
   p.subtitle {{ color: var(--muted); margin-top: 0; font-family: ui-monospace,
                 SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
                 word-break: break-all; }}

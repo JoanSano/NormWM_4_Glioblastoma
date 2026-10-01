@@ -366,6 +366,10 @@ def run_pairwise(database, names, args, RESULTS, formats):
         "marginal, since a Kaplan-Meier curve has no covariates to hold fixed.")
     for i, j in itertools.combinations(cohort_ids, 2):
         pair = pair_frame(database, i, j)
+        names_pair = f"{name_cohort[i]} vs {name_cohort[j]}"
+        # Headed before its figure, so the figure reads as this pair's and not
+        # as the tail of the previous pair's proportional-hazards check
+        REPORT.heading(names_pair, level=3)
         # A pairwise difference is worth no more than the site difference is:
         # two cohorts differ in case-mix as readily as two sites do. When
         # covariates are being adjusted for at all, each pair gets its own
@@ -399,13 +403,12 @@ def run_pairwise(database, names, args, RESULTS, formats):
         # The same assessment the pooled comparison gets: the coefficient
         # drawn on that figure is only as good as the model it came from,
         # and a pair can fail proportional hazards where the pool does not
-        names_pair = f"{name_cohort[i]} vs {name_cohort[j]}"
         ph_frame = complete_case_frame(pair, args.adjust_covariates, site_col="pair")
         subsection(f"Proportional hazards: {names_pair}")
         assess_proportional_hazards(
             ph_frame, RESULTS,
             f"Site-effects_non-proportional-terms_{name_cohort[i]}-{name_cohort[j]}",
-            formats, label=names_pair, show_plot=args.show)
+            formats, label=names_pair, show_plot=args.show, heading_level=4)
 
 
 def save_outputs(database, provenance, args, RESULTS, names, site_of, site_labels):
