@@ -723,78 +723,75 @@ from scipy.signal import wiener
 w_size = 10
 fig, ax = plt.subplots(1, 2, figsize=(10,4))
 colors = [["tab:blue","Blues_r"],["tab:orange","Oranges_r"],["tab:green","Greens_r"],["tab:purple","Purples_r"],["tab:brown","copper"]]
+p_low = np.array([plow for plow, _ in percentiles2check]) # 10 -> 50 (low-group percentile)
+p_labels = [f"{int(p)}/{int(100-p)}" for p in (10, 20, 30, 40, 50)]
 
+# Smoothed median OS curves: index 0 is the 10/90 split, index -1 is the 50/50 split
+curves = {}
 for i in range(1,len(VolSizes.columns)):
     x = np.array([Median_OS[(plow, phigh)][i-1,0] for plow, phigh in percentiles2check]) 
     y = np.array([Median_OS[(plow, phigh)][i-1,3] for plow, phigh in percentiles2check])
+    curves[VolSizes.columns[i]] = (wiener(x, w_size), wiener(y, w_size))
 
-    x = wiener(x, w_size)
-    y = wiener(y, w_size)
-    
-    ax[0].plot(x, y, label=VolSizes.columns[i], color=colors[i-1][0], linewidth=.75)
-    if i == 1:
-        x_end, y_end = x[0], y[0]-2
-        x_pre, y_pre = x[-1]-1.5, y[-1]-1
-        ax[0].annotate('', xy=(x_end, y_end), xytext=(x_pre, y_pre),
-                    arrowprops=dict(arrowstyle='->', color="black", lw=1.5))
-        ax[0].text(x_end, y_end, f"{int(percentiles2check[-1][0])}/{int(percentiles2check[-1][1])}", fontsize=6, fontweight='bold')
-        ax[0].text(x_pre, y_pre, f"{int(percentiles2check[0][0])}/{int(percentiles2check[0][1])}", fontsize=6, fontweight='bold')
+for i, (name, (x, y)) in enumerate(curves.items()):
+    ax[0].plot(x, y, color=colors[i][0], linewidth=.75)
+    # TODO --> Add the fill between with the 95 CIs (check lines 614 and 628)
+    ax[1].plot(p_low, x-y, label=name, color=colors[i][0])
 
-    # TODO --> Add the fill between with the 95 CIs
-    ax[1].plot(range(0,len(percentiles2check)), x-y, label=VolSizes.columns[i], color=colors[i-1][0])
-
-ax[0].plot([18,23], [18,23], '--', color="black", linewidth=0.75)
-ax[0].spines[["top", "right"]].set_visible(False)
-ax[0].set_xlabel(f"Median OS in the small volume group (months)")
-ax[0].set_ylabel(f"Median OS in the large volume group (months)")
-ax[1].spines[["top", "right"]].set_visible(False)
-ax[1].legend(frameon=True, loc='upper right')
+# Axes limits: square window around all curves, wide enough to keep the identity line in view
+all_x = np.concatenate([x for x, _ in curves.values()])
+all_y = np.concatenate([y for _, y in curves.values()])
+pad, arrow_room = 0.4, 1.3 # arrow_room: strip below the curves (inset) reserved for the direction arrow and its labels
+min_val, max_val = np.floor(all_y.min() - arrow_room - pad), np.ceil(all_x.max()) + 1 # Also fits the inset's zoom window
 
 # Adding map
-all_vals = np.concatenate([x, y])
-min_val, max_val = all_vals.min() - 2, all_vals.max() + 2
 diag_space = np.linspace(min_val, max_val, 100)
 for offset in np.linspace(0, 15, 30): 
     ax[0].fill_between(diag_space, diag_space - offset, diag_space - offset-5, color=plt.cm.Reds(offset/15), alpha=0.05, zorder=0)
-intervals = [2, 4, 6, 8, 10, 12] 
+intervals = [c for c in [2, 4, 6, 8, 10, 12] if max_val - c > min_val + 1] # Only lines with room for a label
 for c in intervals:
     # Line: y = x - c
     line_x = np.linspace(min_val + c, max_val, 5)
     line_y = line_x - c
     ax[0].plot(line_x, line_y, color='black', lw=0.5, ls='--', alpha=0.2, zorder=1)
-    ax[0].text(line_x[-1]-.5, line_y[-1]-.25, f"+{c}m", fontsize=7, alpha=1, va='top', ha='right')
+    ax[0].text(max_val + .15, max_val - c, f"+{c}m", fontsize=7, va='center', ha='left', clip_on=False) # Right margin, clear of the zoom box
 ax[0].plot([min_val, max_val], [min_val, max_val], '--', color="black", linewidth=1, zorder=2)
-ax[0].set_xlim(10, 24)
-ax[0].set_ylim(10, 24)
+ax[0].set_xlim(min_val, max_val)
+ax[0].set_ylim(min_val, max_val)
 ax[0].set_aspect('equal')
+ax[0].spines[["top", "right"]].set_visible(False)
+ax[0].set_xlabel(f"Median OS in the small volume group (months)")
+ax[0].set_ylabel(f"Median OS in the large volume group (months)")
 
-# Create the inset axes
-axins = inset_axes(ax[0], width="40%", height="40%", loc='upper left', borderpad=2)
-for i in range(1, len(VolSizes.columns)):
-    x_data = np.array([Median_OS[(plow, phigh)][i-1, 0] for plow, phigh in percentiles2check])
-    y_data = np.array([Median_OS[(plow, phigh)][i-1, 3] for plow, phigh in percentiles2check])
-    
-    x_data = wiener(x_data, w_size)
-    y_data = wiener(y_data, w_size)
-
-    axins.plot(x_data, y_data, color=colors[i-1][0], linewidth=1.5, alpha=.85)
-
-    if i == 1:
-        x_end, y_end = x_data[0]-.75, y_data[0]-2
-        x_pre, y_pre = x_data[-1]-1.5, y_data[-1]-1
-        axins.annotate('', xy=(x_end, y_end), xytext=(x_pre, y_pre),
-                    arrowprops=dict(arrowstyle='->', color="black", lw=1.5))
-        axins.text(x_end, y_end, f"{int(percentiles2check[-1][0])}/{int(percentiles2check[-1][1])}", fontsize=6, fontweight='bold')
-        axins.text(x_pre, y_pre, f"{int(percentiles2check[0][0])}/{int(percentiles2check[0][1])}", fontsize=6, fontweight='bold')
-
-axins.plot([0, 50], [0, 50], '--', color="black", linewidth=0.75)
+# Inset: zoom on the curves, placed in the empty region above the identity line
+y_lo, y_hi = all_y.min() - arrow_room, all_y.max() + pad
+half = max(all_x.max() - all_x.min() + 2*pad, y_hi - y_lo) / 2
+cx, cy = (all_x.max() + all_x.min()) / 2, (y_lo + y_hi) / 2
+axins = inset_axes(ax[0], width="38%", height="38%", loc='upper left', borderpad=1.5,
+                   bbox_to_anchor=(0.06, 0, 1, 1), bbox_transform=ax[0].transAxes) # Shifted right to clear the main y-axis
 for offset in np.linspace(0, 15, 30): 
     axins.fill_between(diag_space, diag_space - offset, diag_space - offset-5, color=plt.cm.Reds(offset/15), alpha=0.05, zorder=0)
-axins.set_xlim(18, 24)
-axins.set_ylim(10, 18)
-axins.tick_params(labelsize=8)
+for i, (name, (x, y)) in enumerate(curves.items()):
+    axins.plot(x, y, color=colors[i][0], linewidth=1.25, alpha=.85)
+    axins.plot(x[0], y[0], 'o', markersize=3, markerfacecolor='white', markeredgecolor=colors[i][0], markeredgewidth=1)
+    axins.plot(x[-1], y[-1], 'o', markersize=3, color=colors[i][0])
+
+# Direction of the stratification sweep: 10/90 (right) -> 50/50 (left)
+y_arrow = all_y.min() - 0.35
+x_tail, x_head = max(x[0] for x, _ in curves.values()), min(x[-1] for x, _ in curves.values()) # Span all start/end points
+axins.annotate('', xy=(x_head, y_arrow), xytext=(x_tail, y_arrow),
+               arrowprops=dict(arrowstyle='->', color="black", lw=1))
+axins.text(x_tail, y_arrow - .1, p_labels[0], fontsize=6, fontweight='bold', va='top', ha='center')
+axins.text(x_head, y_arrow - .1, p_labels[-1], fontsize=6, fontweight='bold', va='top', ha='center')
+
+axins.set_xlim(cx - half, cx + half)
+axins.set_ylim(cy - half, cy + half)
+axins.set_aspect('equal')
+axins.tick_params(labelsize=7)
 axins.spines[["top", "right"]].set_visible(False)
-ax[0].indicate_inset_zoom(axins, edgecolor="black", linewidth=0.5, linestyle="-")
+inset_ind = ax[0].indicate_inset_zoom(axins, edgecolor="black", linewidth=0.5, linestyle="-")
+for conn in inset_ind.connectors: # Corners: lower-left, upper-left, lower-right, upper-right
+    conn.set_visible(not conn.get_visible()) # Swap the auto-picked pair for the other two corners
 
 # Create a colorbar
 norm = mpl.colors.Normalize(vmin=0, vmax=13)
@@ -804,11 +801,15 @@ cbar = fig.colorbar(sm, ax=ax[1], pad=0.1, shrink=1, alpha=0.5)
 cbar.set_label(r'$\Delta OS$ (months)', fontsize=9)
 cbar.ax.tick_params(labelsize=8)
 
-ax[1].set_xticks([0,len(percentiles2check)-1])
-ax[1].set_xticklabels([f"{int(percentiles2check[0][0])}/{int(percentiles2check[0][1])}",f"{int(percentiles2check[-1][0])}/{int(percentiles2check[-1][1])}"])#[f"{int(p[0])}/{int(p[1])}" for p in percentiles2check[::4]])
+ax[1].spines[["top", "right"]].set_visible(False)
+ax[1].legend(frameon=True, loc='upper right', fontsize=8)
+ax[1].set_xticks([10, 20, 30, 40, 50])
+ax[1].set_xticklabels(p_labels)
+ax[1].set_xlim(10, 50)
 ax[1].set_xlabel("Stratification percentile (p, 100-p)")
 ax[1].set_ylabel(r'$\Delta OS_{Small \ volume, Large \ volume}$'+ " (months)")
 
+fig.subplots_adjust(left=0.07, right=0.97, bottom=0.13, top=0.95, wspace=0.3)
 fig.savefig(os.path.join(args.path, results_folder, f"kaplan-meier/Median-OS.{args.format}"), dpi=300, format=args.format)
 plt.close()
     
